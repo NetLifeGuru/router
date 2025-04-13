@@ -79,8 +79,7 @@ One of the key advantages of multi-server support is the ability to run a single
 ```go
 r := router.NewRouter()
 
-r.Proxy("/app")
-r.Static("files/public", "/assets")
+r.Static("/files/public", "/assets")
 
 r.Init(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
   // Runs once on app startup
@@ -102,8 +101,36 @@ r.Recovery(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 })
 ```
 
----
+## 🌐 Proxying Frontend Apps (e.g. Next.js)
 
+Use `r.Proxy("/app")` to seamlessly forward requests to a frontend app like Next.js running behind a reverse proxy.
+
+This enables routing like:
+
+ - `http://localhost:8000/app/test`
+ - `http://localhost:8000/test` (if handled by the frontend app)
+
+```go
+r := router.NewRouter()
+
+r.Proxy("/app")
+
+r.Static("/files/public", "/assets")
+
+```
+
+### Use Case:
+
+If you're running a modern frontend (like Next.js, Vite, React, or SvelteKit) with a development or production reverse proxy setup, this allows all `/app` routes and assets (e.g., client JS, API calls, static files) to be transparently forwarded.
+
+Great for full-stack setups where both backend and frontend are served from the same origin:
+
+ - `/app/_next/static/...`
+ - `/app/api/...`
+ - `/test` (if defined client-side)
+
+
+---
 
 ## 🗂 Working with ctx
 
@@ -313,7 +340,17 @@ This is especially helpful during development or performance testing.
 Limit requests per host by time threshold (in nanoseconds):
 
 ```go
-router.RateLimit(w, r, 10000) // Deny if requests are < 10ms apart
+r := router.NewRouter()
+
+r.Static("/views", "/assets")
+
+r.HandleFunc("/", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+    w.WriteHeader(http.StatusOK)
+})
+
+r.Before(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+    router.RateLimit(w, r, 10000) // Deny if requests are < 10ms apart
+})
 ```
 
 ---
