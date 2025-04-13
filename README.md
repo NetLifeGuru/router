@@ -11,7 +11,7 @@ Includes built-in support for middleware, context, parameterized routing, rate l
  - 🌐 Custom routing with regex parameters
  - 🧩 Lifecycle middleware: Init, Before, After, Recovery
  - 🗂 Request context with thread-safe storage (pooled)
- - 🛡 Simple DDOS guard (per host)
+ - 🛡 Simple RateLimit guard (per host)
  - 📊 Built-in pprof profiling
  - 📁 Static file serving (with favicon.ico support)
  - 🎨 Terminal logging with color output
@@ -89,7 +89,7 @@ r.Init(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 r.Before(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
   // Runs before every request
   r.Host = strings.Replace(r.Host, "127.0.0.1", "localhost", 1)
-  r.DDoS(w, r, 10000) // Drop if too frequent
+  r.RateLimit(w, r, 10000) // Drop if too frequent
 })
 
 r.After(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
@@ -318,12 +318,12 @@ Error message: Failed to do something
 
 This is especially helpful during development or performance testing.
 
-## 🛡 DDOS Guard
+## 🛡 RateLimit Guard
 
 Limit requests per host by time threshold (in nanoseconds):
 
 ```go
-router.DDoS(w, r, 10000) // Deny if requests are < 10ms apart
+router.RateLimit(w, r, 10000) // Deny if requests are < 10ms apart
 ```
 
 ---
@@ -460,7 +460,7 @@ This helps you quickly trace and debug issues without crashing your server.
 - `helpers.go` – JSON, text, file utils
 - `logger.go` – panic handling & logging
 - `terminal.go` – pretty terminal formatting
-- `guard.go` – request throttling (DDOS guard)
+- `rate_limiter.go` – request throttling (RateLimit guard)
 
 ---
 

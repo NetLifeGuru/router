@@ -437,8 +437,6 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			defer r.secondaryRecover(w, req, ctx, "Recovery middleware failed. An error occurred while handling the custom error page!")
 
-			contextPool.Put(ctx)
-
 			r.notFound(w, req, ctx)
 
 		} else {

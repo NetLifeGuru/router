@@ -96,10 +96,10 @@ func openFile(directory string, filename string) *os.File {
 
 	var filepath = fmt.Sprintf("%s/%s", directory, filename)
 
-	logFile, err := os.OpenFile(filepath, os.O_APPEND|os.O_WRONLY, 0644)
+	logFile, err := os.OpenFile(filepath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 
-	if os.IsNotExist(err) {
-		logFile, err = os.Create(filepath)
+	if err != nil {
+		log.Printf("Failed to open or create file %s: %s", filename, err)
 	}
 
 	if err != nil {
@@ -110,27 +110,30 @@ func openFile(directory string, filename string) *os.File {
 }
 
 func closeFile(logFile *os.File) {
-	err := logFile.Close()
-	if err != nil {
-		fmt.Println(err)
+	if logFile == nil {
+		return
+	}
+	if err := logFile.Close(); err != nil {
+		log.Printf("Error closing file: %v", err)
 	}
 }
 
 func Text(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
-	_, err := fmt.Fprint(w, message)
 
-	if err != nil {
-		return
+	if _, err := fmt.Fprint(w, message); err != nil {
+		log.Printf("Failed to write plain text response: %v", err)
 	}
 }
 
 func Param(req *http.Request, key string) string {
-	if params, ok := req.Context().Value(routeParamsKey).(map[string]interface{}); ok {
-		if val, exists := params[key]; exists {
-			return fmt.Sprintf("%v", val)
-		}
+	params, ok := req.Context().Value(routeParamsKey).(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	if val, exists := params[key]; exists {
+		return fmt.Sprintf("%v", val)
 	}
 	return ""
 }

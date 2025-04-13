@@ -12,18 +12,18 @@ type RequestCounter struct {
 
 var requestCounter = &RequestCounter{}
 
-func DDoS(w http.ResponseWriter, r *http.Request, threshold int64) {
+func RateLimit(w http.ResponseWriter, r *http.Request, threshold int64) {
 	now := time.Now()
 
 	value, ok := requestCounter.lastRequest.Load(r.Host)
 	if ok {
-		lastVisit := value.(time.Time)
-		timeDiff := now.UnixNano() - lastVisit.UnixNano()
-
-		if timeDiff < threshold {
-			JSON(w, http.StatusOK, Msg{})
-			RestrictAccess(10)
-			return
+		if lastVisit, ok := value.(time.Time); ok {
+			timeDiff := now.UnixNano() - lastVisit.UnixNano()
+			if timeDiff < threshold {
+				JSON(w, http.StatusOK, Msg{})
+				RestrictAccess(10)
+				return
+			}
 		}
 	}
 
