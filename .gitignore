@@ -1,0 +1,19 @@
+# Go build artifacts and coverage outputs
+*.out
+*.log
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Environment files (never commit secrets!)
+.env
+
+# System junk files
+.DS_Store
+Thumbs.db
+
+# Editor and IDE configs
+.vscode/
+.idea/
+*.swp
