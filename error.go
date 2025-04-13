@@ -41,7 +41,7 @@ func panicMessage() []string {
 
 func Error(w http.ResponseWriter, req *http.Request, message string, err error) bool {
 	if err != nil {
-		logger(message, err, true, req)
+		logError(req, message, err, false)
 
 		http.Error(w, message, http.StatusInternalServerError)
 
@@ -53,7 +53,7 @@ func Error(w http.ResponseWriter, req *http.Request, message string, err error) 
 
 func JSONError(w http.ResponseWriter, req *http.Request, message string, err error) bool {
 	if err != nil {
-		logger(message, err, true, req)
+		logError(req, message, err, false)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -67,7 +67,7 @@ func JSONError(w http.ResponseWriter, req *http.Request, message string, err err
 	return false
 }
 
-func logger(message any, err error, terminal bool, req *http.Request) {
+func logError(req *http.Request, message any, err error, terminal bool) {
 	logFile := openFile("logs", (time.Now().Format("2006-01-02"))+".error.log")
 
 	defer closeFile(logFile)
@@ -83,10 +83,12 @@ func logger(message any, err error, terminal bool, req *http.Request) {
 		method = "UNKNOWN"
 	}
 
-	logger := log.New(logFile, "", log.LstdFlags)
-	logger.Printf("Panic occurred on URL %s | method [%s]\nError message: %s\n%s%s\n\n", path, method, message, errors, strings.Repeat("_", 95))
+	l := log.New(logFile, "", log.LstdFlags)
+	l.Printf("Panic occurred on URL %s | method [%s]\nError message: %s\n%s%s\n\n", path, method, message, errors, strings.Repeat("_", 95))
 
-	terminalOutput(path, method, message, errors)
+	if terminal {
+		terminalOutput(path, method, message, errors)
+	}
 }
 
 func logRequest(req *http.Request, start time.Time) {

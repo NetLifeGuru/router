@@ -16,12 +16,12 @@ func TestPanicMessage(t *testing.T) {
 	}
 }
 
-func TestLogger_WritesToLogFile(t *testing.T) {
+func TestError_WritesToLogFile(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/", nil)
 	req.Host = "localhost"
 
-	logger("simulated panic", nil, false, req)
+	logError(req, "simulated panic", nil, false)
 
 	filename := time.Now().Format("2006-01-02") + ".error.log"
 	path := filepath.Join("logs", filename)

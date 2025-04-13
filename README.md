@@ -104,16 +104,6 @@ r.Recovery(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 
 ---
 
-## 🔀 Routing with Parameters (Regex Supported)
-
-```go
-r.HandleFunc("/test/<id:([a-z]+)>", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-  id := ctx.Param("id")
-  fmt.Fprintf(w, "Test ID: %s", id)
-})
-```
-
----
 
 ## 🗂 Working with ctx
 
@@ -362,9 +352,17 @@ This router enforces strict route matching:
 
 Always define routes without trailing slashes unless explicitly needed.
 
-### 🧩 Parameterized Routes (Slugs)
+### 🧩 Parameterized Routes (Slugs - Regex Supported)
 
 Use dynamic segments with named regex:
+
+```go
+r.HandleFunc("/article/<article:([\S]+)>", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+  article := ctx.Param("article")
+  fmt.Fprintf(w, "Test ID: %s", article)
+})
+```
+
 
 ```go
 /article/<article:([\S]+)>
@@ -458,7 +456,7 @@ This helps you quickly trace and debug issues without crashing your server.
 - `router.go` – main router logic
 - `context.go` – request context pool
 - `helpers.go` – JSON, text, file utils
-- `logger.go` – panic handling & logging
+- `logError.go` – panic handling & logging
 - `terminal.go` – pretty terminal formatting
 - `rate_limiter.go` – request throttling (RateLimit guard)
 

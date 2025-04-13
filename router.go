@@ -341,7 +341,7 @@ func (r *Router) getErrorMessage(message any) error {
 
 func (r *Router) secondaryRecover(w http.ResponseWriter, req *http.Request, ctx *Context, msg string) {
 	if message := recover(); message != nil {
-		logger(message, r.getErrorMessage(message), true, req)
+		logError(req, message, r.getErrorMessage(message), r.terminalOutput)
 		http.Error(w, msg, http.StatusInternalServerError)
 	}
 
@@ -361,7 +361,7 @@ func (r *Router) handler(w http.ResponseWriter, req *http.Request, route RouteEn
 			err := r.getErrorMessage(message)
 
 			if err != nil {
-				logger(message, err, r.terminalOutput, req)
+				logError(req, message, err, r.terminalOutput)
 
 				if r.recovery != nil {
 					defer r.secondaryRecover(w, req, ctx, "Recovery middleware failed. An error occurred while handling the custom error page.")
