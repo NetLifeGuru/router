@@ -28,7 +28,7 @@ Includes built-in support for middleware, context, parameterized routing, rate l
 ## 📦 Installation
 
 ```bash
-go get github.com/NetLifeGuru/router
+go get github.com/NetLifeGuru/router@latest
 ```
 
 ---
