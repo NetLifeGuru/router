@@ -11,6 +11,7 @@ Includes built-in support for middleware, context, parameterized routing, rate l
  - 🌐 Custom routing with regex parameters
  - 🧩 Lifecycle middleware: Init, Before, After, Recovery
  - 🗂 Request context with thread-safe storage (pooled)
+ - 🧾 Accessing Query & Form Data
  - 🛡 Simple RateLimit guard (per host)
  - 📊 Built-in pprof profiling
  - 📁 Static file serving (with favicon.ico support)
@@ -175,7 +176,7 @@ Use `router.Error` or `router.JSONError` to log errors and respond to the client
 ```go
 err := errors.New("something went wrong")
 
-if router.Error("Failed to do something", err, w, r) {
+if router.Error(w, r, "Failed to do something", err) {
 	return
 }
 ```
@@ -189,7 +190,7 @@ if router.Error("Failed to do something", err, w, r) {
 ```go
 err := errors.New("something went wrong")
 
-if router.JSONError("Failed to do something", err, w, r) {
+if router.JSONError(w, r, "Failed to do something", err) {
 	return
 }
 ```
@@ -282,7 +283,7 @@ r.NotFound(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 JSON response:
 ```go
 r.NotFound(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-	router.JSON(w, 404, map[string]any{
+	router.JSON(w, http.StatusNotFound, map[string]any{
 		"error":   true,
 		"message": "Resource not found",
 	})
@@ -292,7 +293,7 @@ r.NotFound(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 Plain text:
 ```go
 r.NotFound(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-	router.Text(w, 404, "404 - Page Not Found")
+	router.Text(w, http.StatusNotFound, "404 - Page Not Found")
 })
 ```
 The NotFound handler ensures your application responds consistently across environments — whether for APIs, web apps, or full-stack apps.
@@ -360,20 +361,20 @@ r.Before(func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 Send raw JSON:
 
 ```go
-router.JSON(w, 200, map[string]string{"message": "OK"})
+router.JSON(w, http.StatusOK, map[string]string{"message": "OK"})
 ```
 
 Send text:
 
 ```go
-router.Text(w, 404, "Not found")
+router.Text(w, http.StatusNotFound, "Not found")
 ```
 
 Structured response:
 
 ```go
-router.JSONResponse(w, 200, yourData, nil)
-router.JSONResponse(w, 500, nil, "Something went wrong")
+router.JSONResponse(w, http.StatusOK, yourData, nil)
+router.JSONResponse(w, http.StatusInternalServerError, nil, "Something went wrong")
 ```
 
 ---
@@ -388,6 +389,50 @@ This router enforces strict route matching:
 - `/test/` ❌ (will not match `/test`)
 
 Always define routes without trailing slashes unless explicitly needed.
+
+### Accessing Query
+Retrieve a query parameter from the URL
+
+```go
+email := router.Query(r, "email")
+```
+
+If the URL is:
+```go
+/search?email=test@example.com
+```
+
+Then email will be:
+```go
+"test@example.com"
+```
+If the parameter is missing, an empty string is returned.
+
+Use this for simple GET query lookups without manually accessing `r.URL.Query()`.
+
+You can retrieve GET query parameters or POST form data with the built-in helpers:
+```go
+query := router.Get(r)
+form, err := router.Post(r)
+```
+
+```go
+r.HandleFunc("/signup", "POST", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+	query := router.Get(r)
+	fmt.Println("Email from query:", query.Get("email"))
+
+	form, err := router.Post(r)
+	if err != nil {
+		router.JSONError(w, r, "Invalid form", err)
+		return
+	}
+	fmt.Println("Name from form:", form.Get("name"))
+
+	router.JSON(w, http.StatusOK, map[string]string{"message": "Form received!"})
+})
+```
+
+### Quick Access Helpers
 
 ### 🧩 Parameterized Routes (Slugs - Regex Supported)
 
@@ -518,7 +563,7 @@ This project is open to community contributions and feedback!
 
 Created by Martin Benadik  
 Framework: **NetLifeGuru Router**  
-Version: **v1.0.0**
+Version: **v1.0.1**
 
 ---
 

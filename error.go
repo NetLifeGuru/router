@@ -58,10 +58,15 @@ func JSONError(w http.ResponseWriter, req *http.Request, message string, err err
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":   true,
 			"message": message,
 		})
+
+		if err != nil {
+			return false
+		}
+
 		return true
 	}
 	return false

@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
 	"os"
 	"regexp"
 	"regexp/syntax"
@@ -33,7 +32,7 @@ type IRouter interface {
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `1.0.0`
+const serverVersion = `1.0.1`
 const MethodAny = "ANY"
 
 type Listener struct {
@@ -93,14 +92,6 @@ type contextKey string
 
 const routeParamsKey contextKey = "routeParams"
 
-type Msg struct {
-	Title      string `json:"title"`
-	Message    string `json:"message"`
-	Source     string `json:"source"`
-	Error      string `json:"error"`
-	StatusCode int    `json:"statusCode"`
-}
-
 func (r *Router) validateUrlParameters(req *http.Request, rx []Pattern, parameters []string) (bool, Params) {
 	if len(parameters) != len(rx) {
 		return false, nil
@@ -136,10 +127,6 @@ func (r *Router) validateUrlParameters(req *http.Request, rx []Pattern, paramete
 	}
 
 	return false, nil
-}
-
-func (r *Router) Get(req *http.Request) url.Values {
-	return req.URL.Query()
 }
 
 func (r *Router) validateMethod(allowedMethods string, requestMethod string) bool {
@@ -263,10 +250,6 @@ func (r *Router) Static(dir string, replace string) {
 	}
 }
 
-func (r *Router) Proxy(segment string) {
-	r.proxySegment = segment
-}
-
 func (r *Router) EnableProfiling(profilingServer string) {
 	mux := http.NewServeMux()
 
@@ -282,6 +265,10 @@ func (r *Router) EnableProfiling(profilingServer string) {
 			log.Printf("[pprof] Error: %v", err)
 		}
 	}()
+}
+
+func (r *Router) Proxy(segment string) {
+	r.proxySegment = segment
 }
 
 func (r *Router) Before(fn HandlerFunc) {
@@ -364,7 +351,7 @@ func (r *Router) handler(w http.ResponseWriter, req *http.Request, route RouteEn
 				logError(req, message, err, r.terminalOutput)
 
 				if r.recovery != nil {
-					defer r.secondaryRecover(w, req, ctx, "Recovery middleware failed. An error occurred while handling the custom error page.")
+					defer r.secondaryRecover(w, req, ctx, "Recovery middleware failed: an error occurred while executing the recovery handler.")
 					r.recovery(w, req, ctx)
 				} else {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)

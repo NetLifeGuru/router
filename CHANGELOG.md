@@ -7,7 +7,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ---
 
-## [Unreleased]
+## [1.0.1] – 2025-04-14
+
+### Changed
+ - Renamed internal functions for more consistent and idiomatic naming
+ - Standardized usage of w `http.ResponseWriter` and r `*http.Request` in all handlers to ensure cleaner and more maintainable code
+ - Refined documentation with improved feature explanations, clearer usage examples, and better overall structure
 
 ---
 
