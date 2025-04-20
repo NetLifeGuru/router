@@ -73,12 +73,12 @@ For more advanced setups (e.g. microservices), you can run multiple servers usin
 r := router.NewRouter()
 
 r.HandleFunc("/", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-w.WriteHeader(http.StatusOK)
+    w.WriteHeader(http.StatusOK)
 })
 
 listeners := r.Listeners{
-{Listen: "localhost:8000", Domain: "localhost:8000"},
-{Listen: "localhost:8001", Domain: "localhost:8001"},
+    {Listen: "localhost:8000", Domain: "localhost:8000"},
+    {Listen: "localhost:8001", Domain: "localhost:8001"},
 }
 
 r.MultiListenAndServe(listeners)
@@ -102,18 +102,18 @@ r := router.NewRouter()
 r.Static("/files/public", "/assets")
 
 r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-// Runs before every request
-r.Host = strings.Replace(r.Host, "127.0.0.1", "localhost", 1)
-r.RateLimit(w, r, 10000) // Drop if too frequent
+    // Runs before every request
+    r.Host = strings.Replace(r.Host, "127.0.0.1", "localhost", 1)
+    r.RateLimit(w, r, 10000) // Drop if too frequent
 })
 
 r.After(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-// Runs after every request
+    // Runs after every request
 })
 
 r.Recovery(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-// Handles panics
-http.Error(w, "Unexpected error occurred", http.StatusInternalServerError)
+    // Handles panics
+    http.Error(w, "Unexpected error occurred", http.StatusInternalServerError)
 })
 ```
 
@@ -162,8 +162,8 @@ If your route uses parameters, you can access them like this:
 
 ```go
 r.HandleFunc("/user/<id:(\\d+)>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-id := ctx.Param("id")
-fmt.Fprintf(w, "User ID: %s", id)
+    id := ctx.Param("id")
+    fmt.Fprintf(w, "User ID: %s", id)
 })
 ```
 
@@ -174,12 +174,12 @@ data between middleware and handlers.
 
 ```go
 r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-ctx.Set("startTime", time.Now())
+    ctx.Set("startTime", time.Now())
 })
 
 r.After(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-start := ctx.Get("startTime").(time.Time)
-log.Printf("Request took %s", time.Since(start))
+    start := ctx.Get("startTime").(time.Time)
+    log.Printf("Request took %s", time.Since(start))
 })
 ```
 
@@ -196,7 +196,7 @@ idiomatic.
 err := errors.New("something went wrong")
 
 if router.Error(w, r, "Failed to do something", err) {
-return
+    return
 }
 ```
 
@@ -210,7 +210,7 @@ return
 err := errors.New("something went wrong")
 
 if router.JSONError(w, r, "Failed to do something", err) {
-return
+    return
 }
 ```
 
@@ -281,9 +281,9 @@ Example:
 
 ```go
 r.Recovery(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-w.Header().Set("Content-Type", "application/json")
-w.WriteHeader(http.StatusInternalServerError)
-fmt.Fprint(w, `{"error":true,"message":"Something went terribly wrong"}`)
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusInternalServerError)
+    fmt.Fprint(w, `{"error":true,"message":"Something went terribly wrong"}`)
 })
 ```
 
@@ -298,8 +298,8 @@ Example – HTML Page:
 
 ```go
 r.NotFound(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-w.Header().Set("Content-Type", "text/html; charset=utf-8")
-fmt.Fprint(w, `<html><body><h1>Error Page</h1></body></html>`)
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    fmt.Fprint(w, `<html><body><h1>Error Page</h1></body></html>`)
 })
 ```
 
@@ -309,10 +309,10 @@ JSON response:
 
 ```go
 r.NotFound(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-router.JSON(w, http.StatusNotFound, map[string]any{
-"error":   true,
-"message": "Resource not found",
-})
+    router.JSON(w, http.StatusNotFound, map[string]any{
+        "error":   true,
+        "message": "Resource not found",
+    })
 })
 ```
 
@@ -320,7 +320,7 @@ Plain text:
 
 ```go
 r.NotFound(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-router.Text(w, http.StatusNotFound, "404 - Page Not Found")
+    r.Text(w, http.StatusNotFound, "404 - Page Not Found")
 })
 ```
 
@@ -374,11 +374,11 @@ r := router.NewRouter()
 r.Static("/views", "/assets")
 
 r.HandleFunc("/", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-w.WriteHeader(http.StatusOK)
+    w.WriteHeader(http.StatusOK)
 })
 
 r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-router.RateLimit(w, r, 10000) // Deny if requests are < 10ms apart
+    router.RateLimit(w, r, 10000) // Deny if requests are < 10ms apart
 })
 ```
 
@@ -451,17 +451,18 @@ form, err := router.Post(r)
 
 ```go
 r.HandleFunc("/signup", "POST", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-query := router.Get(r)
-fmt.Println("Email from query:", query.Get("email"))
+    query := router.Get(r)
+    fmt.Println("Email from query:", query.Get("email"))
 
-form, err := router.Post(r)
-if err != nil {
-router.JSONError(w, r, "Invalid form", err)
-return
-}
-fmt.Println("Name from form:", form.Get("name"))
+    form, err := router.Post(r)
+    if err != nil {
+        router.JSONError(w, r, "Invalid form", err)
+        return
+    }
+    
+	fmt.Println("Name from form:", form.Get("name"))
 
-router.JSON(w, http.StatusOK, map[string]string{"message": "Form received!"})
+    router.JSON(w, http.StatusOK, map[string]string{"message": "Form received!"})
 })
 ```
 
@@ -476,8 +477,8 @@ This is a **shorthand form** that matches **any non-slash segment** and extracts
 
 ```go
 r.HandleFunc("/article/{id}", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-id := ctx.Param("id")
-fmt.Fprintf(w, "Article ID: %s", id)
+    id := ctx.Param("id")
+    fmt.Fprintf(w, "Article ID: %s", id)
 })
 ```
 
@@ -510,8 +511,8 @@ Use dynamic segments with named regex:
 
 ```go
 r.HandleFunc("/article/<article:([\S]+)>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-article := ctx.Param("article")
-fmt.Fprintf(w, "Test ID: %s", article)
+    article := ctx.Param("article")
+    fmt.Fprintf(w, "Test ID: %s", article)
 })
 ```
 
@@ -574,8 +575,8 @@ Instead of using complex regex in routes, use friendly pattern names:
 
 ```go
 r.HandleFunc("/user/<id:isDigits>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-id := ctx.Param("id")
-fmt.Fprintf(w, "User ID: %s", id)
+    id := ctx.Param("id")
+    fmt.Fprintf(w, "User ID: %s", id)
 })
 ```
 
@@ -583,8 +584,8 @@ or
 
 ```go
 r.HandleFunc("/user/{id:isDigits}", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-id := ctx.Param("id")
-fmt.Fprintf(w, "User ID: %s", id)
+    id := ctx.Param("id")
+    fmt.Fprintf(w, "User ID: %s", id)
 })
 ```
 
@@ -592,8 +593,8 @@ Equivalent regex version:
 
 ```go
 r.HandleFunc("/user/<id:(\\d+)>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-id := ctx.Param("id")
-fmt.Fprintf(w, "User ID: %s", id)
+    id := ctx.Param("id")
+    fmt.Fprintf(w, "User ID: %s", id)
 })
 ```
 
@@ -601,8 +602,8 @@ or
 
 ```go
 r.HandleFunc("/user/{id:(\\d+)}", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-id := ctx.Param("id")
-fmt.Fprintf(w, "User ID: %s", id)
+    id := ctx.Param("id")
+    fmt.Fprintf(w, "User ID: %s", id)
 })
 ```
 
@@ -667,7 +668,7 @@ Example:
 
 ```go
 r.Recovery(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-http.Error(w, "Unexpected error occurred", http.StatusInternalServerError)
+    http.Error(w, "Unexpected error occurred", http.StatusInternalServerError)
 })
 ```
 
