@@ -1,6 +1,5 @@
 [![Go Version](https://img.shields.io/badge/go-%3E=1.19-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
-[![Build Status](https://img.shields.io/github/workflow/status/NetLifeGuru/router/test)](https://github.com/NetLifeGuru/router)
 
 # 🚀 NetLifeGuru Router v1.0.2
 
