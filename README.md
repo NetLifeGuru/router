@@ -737,7 +737,7 @@ func Benchmark_NetLifeGuruRouter_Param4(b *testing.B) {
 	r := router.NewRouter()
 
 	concrete := r.(*router.Router)
-	r.HandleFunc("/shop/<a:any>/<b:any>/<c:any>/<d:any>", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+	r.HandleFunc("/shop/{a}/{b}/{c}/{d}", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 		testHandler(w, r)
 	})
 
@@ -757,7 +757,7 @@ func Benchmark_NetLifeGuruRouter_Param7(b *testing.B) {
 
 	concrete := r.(*router.Router)
 
-	r.HandleFunc("/article/:aaa/<bbb>/<ccc>/<ddd>/<eee>/<fff>/<ggg>", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+	r.HandleFunc("/article/{aaa}/{bbb}/{ccc}/{ddd}/{eee}/{fff}/{ggg}", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 		testHandler(w, r)
 	})
 
