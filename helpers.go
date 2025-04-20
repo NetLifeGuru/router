@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 )
 
 type ApiResponse struct {
@@ -128,6 +129,42 @@ func closeFile(logFile *os.File) {
 	}
 }
 
+func fastSplitWords(s string) []string {
+	var result []string
+	start := -1
+
+	for i := 0; i < len(s); i++ {
+		if s[i] != ' ' && start == -1 {
+			start = i
+		} else if s[i] == ' ' && start != -1 {
+			result = append(result, s[start:i])
+			start = -1
+		}
+	}
+	if start != -1 {
+		result = append(result, s[start:])
+	}
+	return result
+}
+
+func BuildCacheKey(method, path string) string {
+	var b strings.Builder
+	b.Grow(len(method) + 1 + len(path))
+	b.WriteString(method)
+	b.WriteByte('-')
+	b.WriteString(path)
+	return b.String()
+}
+
+func countCaptureGroups(s string) int {
+	left := strings.Count(s, "(")
+	right := strings.Count(s, ")")
+	if left != right {
+		return -1
+	}
+	return left
+}
+
 func Text(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
@@ -152,7 +189,6 @@ func Param(req *http.Request, key string) string {
 }
 
 func Get(r *http.Request) url.Values {
-
 	return r.URL.Query()
 }
 

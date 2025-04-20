@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,7 +104,7 @@ func TestRecoveryFromPanic(t *testing.T) {
 }
 
 func TestProxySegmentMiddleware(t *testing.T) {
-	r := newTestableRouter()
+	r := NewRouter().(*Router)
 	r.Proxy("/api")
 
 	r.HandleFunc("/hello", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
@@ -112,7 +113,8 @@ func TestProxySegmentMiddleware(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/hello", nil)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+
+	r.Handler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK || w.Body.String() != "proxied" {
 		t.Errorf("proxy segment failed: got %d '%s'", w.Code, w.Body.String())
@@ -120,24 +122,25 @@ func TestProxySegmentMiddleware(t *testing.T) {
 }
 
 func TestRegexSegmentRoute(t *testing.T) {
-	r := newTestableRouter()
+	r := NewRouter().(*Router)
 	r.Proxy("/api")
 
 	r.HandleFunc("/article/<article:([a-z]+)>", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
-		w.Write([]byte(ctx.Params["article"].(string)))
+		article := ctx.Param("article")
+		w.Write([]byte(article))
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/article/hello", nil)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	r.Handler().ServeHTTP(w, req)
 
+	fmt.Println(w.Body.String())
 	if w.Code != http.StatusOK || w.Body.String() != "hello" {
 		t.Errorf("proxy segment failed: got %d '%s'", w.Code, w.Body.String())
 	}
 }
 
 func TestStaticFileServing(t *testing.T) {
-
 	defer os.RemoveAll("files")
 
 	dir := "files/public"
@@ -150,13 +153,14 @@ func TestStaticFileServing(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	r := newTestableRouter()
+	r := NewRouter().(*Router)
+
 	r.Static("files/public", "/assets")
 
 	req := httptest.NewRequest(http.MethodGet, "/assets/test.txt", nil)
 	w := httptest.NewRecorder()
 
-	r.ServeHTTP(w, req)
+	r.Handler().ServeHTTP(w, req)
 
 	resp := w.Result()
 	body, _ := io.ReadAll(resp.Body)

@@ -4,54 +4,49 @@ import (
 	"testing"
 )
 
-func TestContext_SetAndGet(t *testing.T) {
+func TestContextSetAndGet(t *testing.T) {
 	ctx := &Context{}
-
 	key := "foo"
-	value := "bar"
+	val := "bar"
 
-	ctx.Set(key, value)
+	ctx.Set(key, val)
 
 	got := ctx.Get(key)
-	if got != value {
-		t.Errorf("expected %v, got %v", value, got)
+	if got != val {
+		t.Errorf("expected Get(%q) = %q, got %q", key, val, got)
+	}
+
+	if ctx.Get("nonexistent") != nil {
+		t.Error("expected Get(nonexistent) to return nil")
 	}
 }
 
-func TestContext_GetFromEmpty(t *testing.T) {
-	ctx := &Context{}
-	got := ctx.Get("nonexistent")
-
-	if got != nil {
-		t.Errorf("expected nil for nonexistent key, got %v", got)
-	}
-}
-
-func TestContext_Param(t *testing.T) {
+func TestContextParam(t *testing.T) {
 	ctx := &Context{
-		Params: map[string]interface{}{
-			"id": 123,
+		Params: []Par{
+			{"id", "123"},
+			{"name", "john"},
 		},
 	}
 
-	got := ctx.Param("id")
-	if got != "123" {
-		t.Errorf("expected '123', got %s", got)
+	if ctx.Param("id") != "123" {
+		t.Error(`expected Param("id") = "123"`)
 	}
-
-	// non-existing key
-	none := ctx.Param("name")
-	if none != "" {
-		t.Errorf("expected empty string for missing key, got %s", none)
+	if ctx.Param("name") != "john" {
+		t.Error(`expected Param("name") = "john"`)
+	}
+	if ctx.Param("missing") != "" {
+		t.Error(`expected Param("missing") = ""`)
 	}
 }
 
-func TestContext_Reset(t *testing.T) {
+func TestContextReset(t *testing.T) {
 	ctx := &Context{
-		Params: map[string]interface{}{
-			"id": "value",
+		Params: []Par{{"a", "1"}, {"b", "2"}},
+		Segments: []Seg{
+			{"segment"},
 		},
-		data: map[string]interface{}{
+		Data: map[string]interface{}{
 			"key": "value",
 		},
 	}
@@ -59,31 +54,34 @@ func TestContext_Reset(t *testing.T) {
 	ctx.reset()
 
 	if len(ctx.Params) != 0 {
-		t.Errorf("expected Params to be empty after reset, got %v", ctx.Params)
+		t.Errorf("expected Params to be empty after reset, got %d", len(ctx.Params))
 	}
-	if len(ctx.data) != 0 {
-		t.Errorf("expected data to be empty after reset, got %v", ctx.data)
+	if len(ctx.Segments) != 0 {
+		t.Errorf("expected Segments to be empty after reset, got %d", len(ctx.Segments))
+	}
+	if ctx.Data != nil {
+		t.Error("expected Data to be nil after reset")
 	}
 }
 
-func TestContextPool(t *testing.T) {
-	ctx := contextPool.Get().(*Context)
+func TestGetContextAndPutContext(t *testing.T) {
+	ctx1 := GetContext()
+	ctx1.Set("x", "1")
+	ctx1.Params = append(ctx1.Params, Par{"key", "value"})
+	PutContext(ctx1)
 
-	// simulate usage
-	ctx.Set("test", "value")
-	ctx.Params["id"] = 42
+	ctx2 := GetContext()
 
-	ctx.reset()
-	contextPool.Put(ctx)
-
-	// Get context again
-	newCtx := contextPool.Get().(*Context)
-
-	if val := newCtx.Get("test"); val != nil {
-		t.Errorf("expected nil after reset, got %v", val)
+	if ctx2 == nil {
+		t.Fatal("expected non-nil context")
 	}
-
-	if param := newCtx.Param("id"); param != "" {
-		t.Errorf("expected empty string after reset, got %s", param)
+	if len(ctx2.Params) != 0 {
+		t.Errorf("expected Params to be reset, got %v", ctx2.Params)
+	}
+	if len(ctx2.Segments) != 0 {
+		t.Errorf("expected Segments to be reset, got %v", ctx2.Segments)
+	}
+	if ctx2.Get("x") != nil {
+		t.Errorf("expected Data to be reset, got %v", ctx2.Get("x"))
 	}
 }

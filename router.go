@@ -23,7 +23,6 @@ type IRouter interface {
 	Proxy(segment string)
 	Before(fn HandlerFunc)
 	After(fn HandlerFunc)
-	Init(fn HandlerFunc)
 	Recovery(fn HandlerFunc)
 	Static(dir string, replace string)
 	EnableProfiling(EnableProfiling string)
@@ -32,7 +31,7 @@ type IRouter interface {
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `1.0.1`
+const serverVersion = `v1.0.2`
 const MethodAny = "ANY"
 
 type Listener struct {
@@ -43,48 +42,55 @@ type Listener struct {
 
 type Listeners []Listener
 
-type Params map[string]interface{}
-
 type Pattern struct {
 	Name          string
+	Slug          string
+	Type          int
 	RegexCompiled *regexp.Regexp
-}
-
-type RouteEntry struct {
-	Methods  string
-	Patterns []Pattern
-	Handler  HandlerFunc
+	Fn            MatchFunc
 }
 
 type StaticMap map[string]http.Handler
 
-type Routes map[string][]RouteEntry
+type RouteEntry struct {
+	Route    string
+	Patterns []Pattern
+	Handler  HandlerFunc
+	Bitmask  int
+	Len      int
+}
+
+type RouteIndex map[int]RouteEntry
+type Routes map[string]RouteIndex
+type StaticRoutes map[string]RouteEntry
 
 type Router struct {
 	routes         Routes
+	staticRoutes   StaticRoutes
 	mux            *http.ServeMux
 	beforeHandlers []HandlerFunc
 	afterHandlers  []HandlerFunc
-	init           []HandlerFunc
 	recovery       HandlerFunc
 	notFound       HandlerFunc
 	terminalOutput bool
 	proxySegment   string
 	staticFiles    StaticMap
+	regex          *regexp.Regexp
 }
 
 func NewRouter() IRouter {
 	return &Router{
 		routes:         make(Routes),
+		staticRoutes:   make(StaticRoutes),
 		mux:            http.NewServeMux(),
 		beforeHandlers: []HandlerFunc{},
 		afterHandlers:  []HandlerFunc{},
-		init:           []HandlerFunc{},
 		recovery:       nil,
 		notFound:       nil,
 		terminalOutput: false,
 		proxySegment:   "",
 		staticFiles:    make(StaticMap),
+		regex:          regexp.MustCompile(`(([\p{L}0-9\-._~%]+)/)|(<(.*?)>/)|({(.*?)}/)`),
 	}
 }
 
@@ -92,136 +98,151 @@ type contextKey string
 
 const routeParamsKey contextKey = "routeParams"
 
-func (r *Router) validateUrlParameters(req *http.Request, rx []Pattern, parameters []string) (bool, Params) {
-	if len(parameters) != len(rx) {
-		return false, nil
-	}
-
-	queryParams := req.URL.Query()
-	values := make(Params)
-
-	for i, regExp := range rx {
-		matches := regExp.RegexCompiled.FindStringSubmatch(parameters[i])
-		if len(matches) == 0 {
-			continue
-		}
-
-		values[regExp.Name] = matches
-		for j, match := range matches {
-			if j == 0 {
-				queryParams.Set(regExp.Name, match)
-			} else {
-				queryParams.Add(regExp.Name, match)
-			}
-		}
-
-		if len(matches) == 2 {
-			values[regExp.Name] = matches[1]
-		}
-	}
-
-	req.URL.RawQuery = queryParams.Encode()
-
-	if len(values) == len(rx) {
-		return true, values
-	}
-
-	return false, nil
-}
-
 func (r *Router) validateMethod(allowedMethods string, requestMethod string) bool {
 	methods := strings.Split(allowedMethods, ",")
-	for _, method := range methods {
-		if method == MethodAny || strings.TrimSpace(method) == requestMethod {
+	for i := 0; i < len(methods); i++ {
+		if methods[i] == MethodAny || strings.TrimSpace(methods[i]) == requestMethod {
 			return true
 		}
 	}
 	return false
 }
 
-func (r *Router) getUrlParams(url string) []string {
+const (
+	_STRING = iota + 1
+	_PATTERN
+	_MATCH
+	_SUBMATCH
+)
 
-	regex := regexp.MustCompile("/$")
-	match := regex.MatchString(url)
-	if match == true {
-		url = url + "·"
+func (r *Router) removeWrapper(s string, start string, end string) string {
+	var str string
+
+	if len(s) >= 2 && s[0] == start[0] && s[len(s)-1] == end[0] {
+		str = s[1 : len(s)-1]
+	} else {
+		str = s
 	}
 
-	u := strings.FieldsFunc(strings.Trim(url, "/"), func(r rune) bool {
-		return r == '/'
-	})
+	return str
+}
 
-	if len(u) > 0 {
-		return u[1:]
+func (r *Router) findPatterns(str string) MatchFunc {
+	possibleRegExpPattern := r.removeWrapper(str, "(", ")")
+
+	if pattern, ok := PatternMatchers[possibleRegExpPattern]; ok {
+		// function
+		return pattern
+	} else if pattern, ok := FunctionMatchers[possibleRegExpPattern]; ok {
+		// function
+		return pattern
 	}
 
 	return nil
 }
 
-func (r *Router) createRegexPatterns(url string) ([]Pattern, string) {
-	var (
-		regexPattern   []Pattern
-		parameterName  string
-		parameterRegex string
-	)
+func (r *Router) parseSlug(isStatic bool, s string, url string) (Pattern, bool) {
 
-	str := strings.Trim(url, "/")
-	parts := strings.Split(str, "/")
+	var str string
+	var slugPattern Pattern
 
-	pattern := regexp.MustCompile("<(\\w+):(.*?)>")
-	u := parts[:1]
-	parts = parts[1:]
+	if (len(s) >= 2 && s[0] == '<' && s[len(s)-1] == '>') || (len(s) >= 2 && s[0] == '{' && s[len(s)-1] == '}') {
+		isStatic = false
+		str = s[1 : len(s)-1]
 
-	if u[0] == "" {
-		u[0] = "/"
-	}
-
-	if len(parts) > 0 {
-		for _, p := range parts {
-
-			arr := pattern.FindStringSubmatch(p)
-
-			if len(arr) > 2 {
-				parameterName = arr[1]
-				parameterRegex = arr[2]
+		pt := ""
+		for i := 0; i < len(s); i++ {
+			if s[i] == ':' {
+				slugPattern.Slug = str[0 : i-1]
+				pt = str[i:]
+				break
 			} else {
-				parameterName = p
-				parameterRegex = p
+				pt = "any"
 			}
-
-			_, err := syntax.Parse(parameterRegex, syntax.PerlX)
-			if err != nil {
-				fmt.Printf("Error: Wrong regular expression %s in URL pattern %s\n", parameterRegex, url)
-				os.Exit(3)
-			}
-
-			item := Pattern{
-				Name:          parameterName,
-				RegexCompiled: regexp.MustCompile("^" + parameterRegex + "$"),
-			}
-
-			regexPattern = append(regexPattern, item)
 		}
 
-		return regexPattern, u[0]
+		if c := countCaptureGroups(pt); c > 0 {
+			//FindAllStringSubmatch
+			if _, err := syntax.Parse(pt, syntax.PerlX); err != nil {
+				fmt.Printf("Error: Wrong regular expression %s in URL pattern %s\n", pt, url)
+				os.Exit(3)
+			}
+			slugPattern.RegexCompiled = regexp.MustCompile("^" + pt + "$")
+			slugPattern.Type = _SUBMATCH
+		} else {
+			//Match
+			slugPattern.Fn = r.findPatterns(pt)
+
+			if slugPattern.Fn == nil {
+				if _, err := syntax.Parse(pt, syntax.PerlX); err != nil {
+					fmt.Printf("Error: Wrong regular expression %s in URL pattern %s\n", pt, url)
+					os.Exit(3)
+				}
+				slugPattern.RegexCompiled = regexp.MustCompile("^" + pt + "$")
+				slugPattern.Type = _MATCH
+			} else {
+				slugPattern.Type = _PATTERN
+			}
+		}
+
 	} else {
-		return nil, u[0]
+		slugPattern.Slug = s
+		slugPattern.Type = _STRING
 	}
+
+	return slugPattern, isStatic
+}
+
+func (r *Router) preparePattern(url string) (string, []Pattern, bool) {
+	parts := make([]string, 0, 5)
+
+	if url != "/" {
+		matches := r.regex.FindAllStringSubmatch(url+`/`, -1)
+		for i := 0; i < len(matches); i++ {
+			part := matches[i][0][:len(matches[i][0])-1]
+			parts = append(parts, part)
+		}
+	} else {
+		return "", nil, true
+	}
+
+	first := parts[0]
+
+	var patterns []Pattern
+
+	var isStatic = true
+	for i := 0; i < len(parts); i++ {
+		p, st := r.parseSlug(isStatic, parts[i], url)
+		isStatic = st
+		patterns = append(patterns, p)
+	}
+
+	return first, patterns, isStatic
 }
 
 func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
-	patterns, route := r.createRegexPatterns(url)
+	route, patterns, isStatic := r.preparePattern(url)
 
 	entry := RouteEntry{
-		Methods:  methods,
+		Route:    url,
 		Patterns: patterns,
 		Handler:  fn,
+		Bitmask:  r.bitmask(url, methods),
+		Len:      len(patterns),
 	}
 
-	if r.routes[route] != nil {
-		r.routes[route] = append(r.routes[route], entry)
+	if isStatic {
+
+		r.staticRoutes[url] = entry
+
 	} else {
-		r.routes[route] = []RouteEntry{entry}
+
+		if _, exists := r.routes[route]; !exists {
+			r.routes[route] = make(RouteIndex)
+		}
+
+		r.routes[route][len(r.routes[route])] = entry
+
 	}
 }
 
@@ -279,10 +300,6 @@ func (r *Router) After(fn HandlerFunc) {
 	r.afterHandlers = append(r.afterHandlers, fn)
 }
 
-func (r *Router) Init(fn HandlerFunc) {
-	r.init = append(r.init, fn)
-}
-
 func (r *Router) Recovery(fn HandlerFunc) {
 	r.recovery = fn
 }
@@ -293,22 +310,6 @@ func (r *Router) NotFound(fn HandlerFunc) {
 
 func (r *Router) TerminalOutput(terminal bool) {
 	r.terminalOutput = terminal
-}
-
-func (r *Router) runInitHandlers() {
-	for _, fn := range r.init {
-		fn(nil, nil, &Context{})
-	}
-}
-
-func (r *Router) getRoute(fullPath string) string {
-	path := strings.Trim(fullPath, "/")
-	if path == "" {
-		return "/"
-	}
-	route := strings.SplitN(path, "/", 2)[0]
-
-	return route
 }
 
 func (r *Router) getErrorMessage(message any) error {
@@ -327,29 +328,46 @@ func (r *Router) getErrorMessage(message any) error {
 }
 
 func (r *Router) secondaryRecover(w http.ResponseWriter, req *http.Request, ctx *Context, msg string) {
-	if message := recover(); message != nil {
-		logError(req, message, r.getErrorMessage(message), r.terminalOutput)
-		http.Error(w, msg, http.StatusInternalServerError)
+	func() {
+		if message := recover(); message != nil {
+			logError(req, message, r.getErrorMessage(message), r.terminalOutput)
+			http.Error(w, msg, http.StatusInternalServerError)
+		}
+
+		if ctx != nil {
+			contextPool.Put(ctx)
+		}
+	}()
+}
+
+func (r *Router) Run(w http.ResponseWriter, req *http.Request, handler HandlerFunc, ctx *Context) {
+
+	for i := 0; i < len(r.beforeHandlers); i++ {
+		r.beforeHandlers[i](w, req, ctx)
 	}
 
-	if ctx != nil {
-		contextPool.Put(ctx)
+	if r.terminalOutput {
+		start := time.Now()
+		handler(w, req, ctx)
+		logRequest(req, start)
+	} else {
+		handler(w, req, ctx)
+	}
+
+	for i := 0; i < len(r.afterHandlers); i++ {
+		r.afterHandlers[i](w, req, ctx)
 	}
 }
 
-func (r *Router) handler(w http.ResponseWriter, req *http.Request, route RouteEntry, params Params) {
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
-	ctx := contextPool.Get().(*Context)
-	ctx.reset()
-	ctx.Params = params
+	ctx := GetContext()
 
 	defer func() {
-		if message := recover(); message != nil {
-			err := r.getErrorMessage(message)
-
+		if m := recover(); m != nil {
+			err := r.getErrorMessage(m)
 			if err != nil {
-				logError(req, message, err, r.terminalOutput)
-
+				logError(req, m, err, r.terminalOutput)
 				if r.recovery != nil {
 					defer r.secondaryRecover(w, req, ctx, "Recovery middleware failed: an error occurred while executing the recovery handler.")
 					r.recovery(w, req, ctx)
@@ -359,86 +377,140 @@ func (r *Router) handler(w http.ResponseWriter, req *http.Request, route RouteEn
 			}
 		}
 
-		if ctx != nil {
-			contextPool.Put(ctx)
-		}
+		PutContext(ctx)
 	}()
 
-	for _, before := range r.beforeHandlers {
-		before(w, req, ctx)
-	}
+	p := req.URL.Path
+	t := r.staticRoutes[p]
 
-	if r.terminalOutput {
-		start := time.Now()
-		route.Handler(w, req, ctx)
-		logRequest(req, start)
+	if t.Route != "" {
+		r.Run(w, req, t.Handler, ctx)
 	} else {
-		route.Handler(w, req, ctx)
-	}
+		var found bool
+		var segment string
 
-	for _, after := range r.afterHandlers {
-		after(w, req, ctx)
-	}
-}
+		start := -1
 
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+		for j := 0; j < len(p); j++ {
+			if p[j] != '/' {
+				if start == -1 {
+					start = j
+				}
+			} else if start != -1 {
 
-	for prefix, handler := range r.staticFiles {
-		if strings.HasPrefix(req.URL.Path, prefix) {
-			handler.ServeHTTP(w, req)
-			return
+				ctx.Segments = append(ctx.Segments, Seg{p[start:j]})
+				start = -1
+			}
 		}
-	}
 
-	path := req.URL.Path
+		if start != -1 {
 
-	if r.proxySegment != "" {
-		path = strings.TrimPrefix(path, r.proxySegment)
-	}
+			ctx.Segments = append(ctx.Segments, Seg{p[start:]})
 
-	notFound := true
+			if handlers, ok := r.routes[ctx.Segments[0].Value]; ok {
 
-	if routes, ok := r.routes[r.getRoute(path)]; ok {
+				method := getBitmaskIndex(req.Method)
 
-		parameters := r.getUrlParams(path)
-		requestMethod := req.Method
+				for i := 0; i < len(handlers); i++ {
+					if handlers[i].Bitmask&method != 0 {
 
-		for _, route := range routes {
-			if r.validateMethod(route.Methods, requestMethod) {
-				if ok, params := r.validateUrlParameters(req, route.Patterns, parameters); ok {
+						handler := handlers[i].Handler
+						valid := true
+						if handlers[i].Len == len(ctx.Segments) {
+							patterns := handlers[i].Patterns
 
-					notFound = false
+							for z := 1; z < len(ctx.Segments); z++ {
 
-					r.handler(w, req, route, params)
+								segment = ctx.Segments[z].Value
+								h := patterns[z]
+								t := patterns[z].Type
 
-					break
+								if t == _STRING {
+									if segment == h.Slug {
+										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
+									} else {
+										valid = false
+									}
+								} else if t == _MATCH {
+									if h.RegexCompiled.MatchString(segment) {
+										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
+									} else {
+										valid = false
+									}
+								} else if t == _PATTERN {
+									if h.Fn(segment) {
+										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
+									} else {
+										valid = false
+									}
+								} else if t == _SUBMATCH {
+									m := h.RegexCompiled.FindStringSubmatch(segment)
+									if len(m) > 0 {
+										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
+									} else {
+										valid = false
+									}
+								}
+							}
+						} else {
+							valid = false
+						}
+
+						if valid {
+							found = true
+							r.Run(w, req, handler, ctx)
+						}
+					}
 				}
 			}
 		}
-	}
 
-	if notFound {
-		if r.notFound != nil {
-			ctx := contextPool.Get().(*Context)
-			ctx.reset()
-
-			defer r.secondaryRecover(w, req, ctx, "Recovery middleware failed. An error occurred while handling the custom error page!")
-
-			r.notFound(w, req, ctx)
-
-		} else {
-			http.NotFound(w, req)
+		if !found {
+			if r.notFound != nil {
+				r.notFound(w, req, ctx)
+			} else {
+				http.NotFound(w, req)
+			}
 		}
 	}
+}
+
+func (r *Router) Handler() http.HandlerFunc {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+
+		for prefix, staticHandler := range r.staticFiles {
+			path := req.URL.Path
+			pl := len(prefix)
+			if len(path) >= pl && path[:pl] == prefix {
+				staticHandler.ServeHTTP(w, req)
+				return
+			}
+		}
+
+		if r.proxySegment != "" {
+			path := req.URL.Path
+			seg := r.proxySegment
+			segLen := len(seg)
+			if len(path) >= segLen && path[:segLen] == seg {
+				req.URL.Path = path[segLen:]
+				if req.URL.Path == "" {
+					req.URL.Path = "/"
+				}
+			}
+		}
+
+		r.ServeHTTP(w, req)
+	})
+
+	return handler
 }
 
 func (r *Router) MultiListenAndServe(listeners Listeners) {
 
-	r.runInitHandlers()
-
 	var wg sync.WaitGroup
 
-	for _, proxy := range listeners {
+	for i := 0; i < len(listeners); i++ {
+		proxy := listeners[i]
 		var (
 			listen  = proxy.Listen
 			portStr = strings.Split(listen, ":")[1]
@@ -458,7 +530,7 @@ func (r *Router) MultiListenAndServe(listeners Listeners) {
 				printServerInfo(serverName, serverVersion, port)
 			}
 
-			err := http.ListenAndServe(listen, r)
+			err := http.ListenAndServe(listen, r.Handler())
 
 			if err != nil {
 				log.Fatal(err)
@@ -472,13 +544,11 @@ func (r *Router) MultiListenAndServe(listeners Listeners) {
 
 func (r *Router) ListenAndServe(port int) {
 
-	r.runInitHandlers()
-
 	if r.terminalOutput {
 		printServerInfo(serverName, serverVersion, port)
 	}
 
-	err := http.ListenAndServe(fmt.Sprintf("localhost:%d", port), r)
+	err := http.ListenAndServe(fmt.Sprintf("localhost:%d", port), r.Handler())
 
 	if err != nil {
 		log.Fatal(err)

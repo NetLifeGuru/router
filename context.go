@@ -1,54 +1,71 @@
 package router
 
 import (
-	"fmt"
 	"sync"
 )
 
+type Par struct {
+	Key   string
+	Value string
+}
+
+type Seg struct {
+	Value string
+}
+
 type Context struct {
-	Params map[string]interface{}
-	data   map[string]interface{}
+	Params   []Par
+	Segments []Seg
+	Data     map[string]interface{}
 }
 
 func (c *Context) Set(key string, value interface{}) {
-	if c.data == nil {
-		c.data = make(map[string]interface{})
+	if c.Data == nil {
+		c.Data = make(map[string]interface{}, 4)
 	}
-	c.data[key] = value
+	c.Data[key] = value
 }
 
 func (c *Context) Get(key string) interface{} {
-	if c.data == nil {
+	if c.Data == nil {
 		return nil
 	}
-	return c.data[key]
+	return c.Data[key]
 }
 
 func (c *Context) Param(key string) string {
-	if val, ok := c.Params[key]; ok {
-		return fmt.Sprintf("%v", val)
+	for _, p := range c.Params {
+		if p.Key == key {
+			return p.Value
+		}
 	}
 	return ""
+}
+
+func (c *Context) reset() {
+	c.Params = c.Params[:0]
+	c.Segments = c.Segments[:0]
+
+	if c.Data != nil {
+		c.Data = nil
+	}
 }
 
 var contextPool = sync.Pool{
 	New: func() any {
 		return &Context{
-			Params: make(map[string]interface{}),
-			data:   make(map[string]interface{}),
+			Params:   make([]Par, 0, 8),
+			Segments: make([]Seg, 0, 8),
 		}
 	},
 }
 
-func (c *Context) reset() {
-	for k := range c.Params {
-		delete(c.Params, k)
-	}
-	if c.data == nil {
-		c.data = make(map[string]interface{})
-	} else {
-		for k := range c.data {
-			delete(c.data, k)
-		}
-	}
+func GetContext() *Context {
+	ctx := contextPool.Get().(*Context)
+	ctx.reset()
+	return ctx
+}
+
+func PutContext(ctx *Context) {
+	contextPool.Put(ctx)
 }
