@@ -158,7 +158,7 @@ func (r *Router) bitmask(query, methods string) int {
 }
 
 func (r *Router) handleRoute(method string, methodsBitmask int) bool {
-	if methodsBitmask == int(ANY) {
+	if methodsBitmask == ANY {
 		return true
 	}
 
