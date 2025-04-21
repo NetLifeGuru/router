@@ -7,8 +7,24 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ---
 
+## [1.0.4] – 2025-04-21
 
+### Added
+ - Introduced a Code of Conduct to help foster a welcoming and respectful community
+ - Added a Contributing Guide outlining best practices for issues, pull requests, commits, and testing
 
+### Changed
+
+- Internal refactor: moved indexToBit and getBitmaskIndex into the Router as methods for better cohesion
+`(no impact on public API or behavior)`
+
+### Fixed
+ - Cleaned up redundant type conversion in route handling
+ - Improved how HandleFunc is stored and resolved during request routing
+ - Resolved edge cases in ServeHTTP route matching logic
+
+### Performance
+ - Replaced `http.NotFound` with a lightweight custom 404 handler to reduce memory allocations
 
 ## [1.0.3] – 2025-04-21
 
@@ -62,3 +78,4 @@ This patch ensures stable and deterministic matching of all registered routes, e
 - Panic recovery and error logging
 - Built-in pprof profiling
 - Project structure and documentation
+]()
