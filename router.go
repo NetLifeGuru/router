@@ -59,7 +59,7 @@ type RouteEntry struct {
 	Bitmask  int
 }
 
-type RouteIndex map[int]map[int][]RouteEntry
+type RouteIndex map[int]map[int]RouteEntry
 type Routes map[string]RouteIndex
 type StaticRoutes map[string]RouteEntry
 
@@ -242,12 +242,12 @@ func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
 		depth := len(patterns)
 
 		if _, exists := r.routes[route][depth]; !exists {
-			r.routes[route][depth] = make(map[int][]RouteEntry)
+			r.routes[route][depth] = make(map[int]RouteEntry)
 		}
 
 		l := len(r.routes[route][depth])
 
-		r.routes[route][depth][l] = append(r.routes[route][depth][l], entry)
+		r.routes[route][depth][l] = entry
 	}
 }
 
@@ -417,53 +417,44 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				method := r.getBitmaskIndex(req.Method)
 
 				for i := 0; i < len(handlers); i++ {
-					for l := 0; l < len(handlers[i]); l++ {
+					entry := handlers[i]
+					if entry.Bitmask&method == 0 {
+						continue
+					}
 
-						if handlers[i][l].Bitmask&method != 0 {
+					handler := entry.Handler
+					patterns := entry.Patterns
+					valid := true
+					for z := 1; z < len(ctx.Segments); z++ {
+						segment = ctx.Segments[z].Value
+						p := patterns[z]
 
-							handler := handlers[i][l].Handler
-							valid := true
-							patterns := handlers[i][l].Patterns
-
-							for z := 1; z < len(ctx.Segments); z++ {
-
-								segment = ctx.Segments[z].Value
-								h := patterns[z]
-								t := patterns[z].Type
-
-								if t == _STRING {
-									if segment == h.Slug {
-										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
-									} else {
-										valid = false
-									}
-								} else if t == _MATCH {
-									if h.RegexCompiled.MatchString(segment) {
-										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
-									} else {
-										valid = false
-									}
-								} else if t == _PATTERN {
-									if h.Fn(segment) {
-										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
-									} else {
-										valid = false
-									}
-								} else if t == _SUBMATCH {
-									m := h.RegexCompiled.FindStringSubmatch(segment)
-									if len(m) > 0 {
-										ctx.Params = append(ctx.Params, Par{h.Slug, segment})
-									} else {
-										valid = false
-									}
-								}
+						switch p.Type {
+						case _STRING:
+							if segment != p.Slug {
+								valid = false
 							}
-
-							if valid {
-								found = true
-								r.Run(w, req, handler, ctx)
+						case _MATCH:
+							if !p.RegexCompiled.MatchString(segment) {
+								valid = false
+							}
+						case _PATTERN:
+							if !p.Fn(segment) {
+								valid = false
+							}
+						case _SUBMATCH:
+							if len(p.RegexCompiled.FindStringSubmatch(segment)) == 0 {
+								valid = false
 							}
 						}
+						if valid {
+							ctx.Params = append(ctx.Params, Par{p.Slug, segment})
+						}
+					}
+
+					if valid {
+						found = true
+						r.Run(w, req, handler, ctx)
 					}
 				}
 			}
