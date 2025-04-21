@@ -414,7 +414,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			if handlers, ok := r.routes[ctx.Segments[0].Value][len(ctx.Segments)]; ok {
 
-				method := getBitmaskIndex(req.Method)
+				method := r.getBitmaskIndex(req.Method)
 
 				for i := 0; i < len(handlers); i++ {
 					for l := 0; l < len(handlers[i]); l++ {

@@ -51,7 +51,7 @@ func removeDuplicates(input []string) []string {
 	return result
 }
 
-func indexToBit(i int) int {
+func (r *Router) indexToBit(i int) int {
 	switch i {
 	case GET:
 		return 0
@@ -73,7 +73,7 @@ func indexToBit(i int) int {
 	return 7
 }
 
-func getBitmaskIndex(m string) int {
+func (r *Router) getBitmaskIndex(m string) int {
 	var method int
 
 	switch m {
@@ -114,8 +114,8 @@ func (r *Router) MethodsToBitmask(methods string) int {
 			if index < 0 {
 				return -1
 			}
-			if !seen[indexToBit(index)] {
-				seen[indexToBit(index)] = true
+			if !seen[r.indexToBit(index)] {
+				seen[r.indexToBit(index)] = true
 				bitmask |= index
 			}
 		}
@@ -130,7 +130,7 @@ func (r *Router) MethodsToBitmask(methods string) int {
 		if index < 0 {
 			return -1
 		}
-		if !seen[indexToBit(index)] {
+		if !seen[r.indexToBit(index)] {
 			bitmask |= index
 		}
 	}
