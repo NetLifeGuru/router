@@ -1,7 +1,7 @@
 [![Go Version](https://img.shields.io/badge/go-%3E=1.19-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
-# 🚀 NetLifeGuru Router v1.0.3
+# 🚀 NetLifeGuru Router v1.0.4
 
 A clean, performant and idiomatic HTTP router & microframework for Go – built for modern backend APIs, apps, and
 full-stack setups.
@@ -706,7 +706,7 @@ of micro-benchmarks targeting different route types and depths.
 | Static route (/)         | ~35M ops/sec   | ~33 ns/op       | 1           | 9 B   |
 | Route with 4 parameters  | ~16.7M ops/sec | ~71 ns/op       | 1           | 6 B   |
 | Route with 7 parameters  | ~12.6M ops/sec | ~94 ns/op       | 1           | 7 B   |
-| Route with 50 parameters | ~3.7M ops/sec  | ~320 ns/op      | 3           | 119 B |
+| Route with 51 parameters | ~3.5M ops/sec  | ~347 ns/op      | 1           | 6 B   |
 
 ### 🚀 Benchmark Code Snippet
 
@@ -773,21 +773,21 @@ func Benchmark_NetLifeGuruRouter_Param7(b *testing.B) {
 
 ```go
 func Benchmark_NetLifeGuruRouter_Param50(b *testing.B) {
-	r := router.NewRouter()
+r := router.NewRouter()
 
-	concrete := r.(*router.Router)
+concrete := r.(*router.Router)
 
-	r.HandleFunc("/test/{a1}/{a2}/{a3}/{a4}/{a5}/{a6}/{a7}/{a8}/{a9}/{a0}/{a11}/{a12}/{a13}/{a14}/{a15}/{a16}/{a17}/{a18}/{a19}/{a20}/{a21}/{a22}/{a23}/{a24}/{a25}/{a26}/{a27}/{a28}/{a29}/{a30}/{a31}/{a32}/{a33}/{a34}/{a35}/{a36}/{a37}/{a38}/{a39}/{a40}/{a41}/{a42}/{a43}/{a44}/{a45}/{a46}/{a47}/{a48}/{a49}/{a50}/{a51}", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-		testHandler(w, r)
-	})
+r.HandleFunc("test/<a1>/<a2>/<a3>/<a4>/<a5>/<a6>/<a7>/<a8>/<a9>/<a10>/<a11>/<a12>/<a13>/<a14>/<a15>/<a16>/<a17>/<a18>/<a19>/<a20>/<a21>/<a22>/<a23>/<a24>/<a25>/<a26>/<a27>/<a28>/<a29>/<a30>/<a31>/<a32>/<a33>/<a34>/<a35>/<a36>/<a37>/<a38>/<a39>/<a40>/<a41>/<a42>/<a43>/<a44>/<a45>/<a46>/<a47>/<a48>/<a49>/<a50>/<a51>", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+testHandler(w, r)
+})
 
-	req := httptest.NewRequest("GET", "/test/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/50/51", nil)
-	w := httptest.NewRecorder()
+req := httptest.NewRequest("GET", "/test/1/2/3/4/5/6/7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51", nil)
+w := httptest.NewRecorder()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		concrete.ServeHTTP(w, req)
-	}
+b.ResetTimer()
+for i := 0; i < b.N; i++ {
+concrete.ServeHTTP(w, req)
+}
 }
 ```
 
@@ -830,7 +830,7 @@ This project is open to community contributions and feedback!
 
 Created by Martin Benadik  
 Framework: **NetLifeGuru Router**  
-Version: **v1.0.3**
+Version: **v1.0.4**
 
 ---
 

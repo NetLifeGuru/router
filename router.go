@@ -31,7 +31,7 @@ type IRouter interface {
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `v1.0.3`
+const serverVersion = `v1.0.4`
 const MethodAny = "ANY"
 
 type Listener struct {
@@ -464,7 +464,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if r.notFound != nil {
 				r.notFound(w, req, ctx)
 			} else {
-				http.NotFound(w, req)
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte("404 page not found"))
 			}
 		}
 	}
