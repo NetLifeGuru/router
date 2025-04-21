@@ -31,7 +31,7 @@ type IRouter interface {
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `v1.0.2`
+const serverVersion = `v1.0.3`
 const MethodAny = "ANY"
 
 type Listener struct {
@@ -57,10 +57,9 @@ type RouteEntry struct {
 	Patterns []Pattern
 	Handler  HandlerFunc
 	Bitmask  int
-	Len      int
 }
 
-type RouteIndex map[int]RouteEntry
+type RouteIndex map[int]map[int][]RouteEntry
 type Routes map[string]RouteIndex
 type StaticRoutes map[string]RouteEntry
 
@@ -228,7 +227,6 @@ func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
 		Patterns: patterns,
 		Handler:  fn,
 		Bitmask:  r.bitmask(url, methods),
-		Len:      len(patterns),
 	}
 
 	if isStatic {
@@ -241,8 +239,15 @@ func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
 			r.routes[route] = make(RouteIndex)
 		}
 
-		r.routes[route][len(r.routes[route])] = entry
+		depth := len(patterns)
 
+		if _, exists := r.routes[route][depth]; !exists {
+			r.routes[route][depth] = make(map[int][]RouteEntry)
+		}
+
+		l := len(r.routes[route][depth])
+
+		r.routes[route][depth][l] = append(r.routes[route][depth][l], entry)
 	}
 }
 
@@ -407,17 +412,18 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			ctx.Segments = append(ctx.Segments, Seg{p[start:]})
 
-			if handlers, ok := r.routes[ctx.Segments[0].Value]; ok {
+			if handlers, ok := r.routes[ctx.Segments[0].Value][len(ctx.Segments)]; ok {
 
 				method := getBitmaskIndex(req.Method)
 
 				for i := 0; i < len(handlers); i++ {
-					if handlers[i].Bitmask&method != 0 {
+					for l := 0; l < len(handlers[i]); l++ {
 
-						handler := handlers[i].Handler
-						valid := true
-						if handlers[i].Len == len(ctx.Segments) {
-							patterns := handlers[i].Patterns
+						if handlers[i][l].Bitmask&method != 0 {
+
+							handler := handlers[i][l].Handler
+							valid := true
+							patterns := handlers[i][l].Patterns
 
 							for z := 1; z < len(ctx.Segments); z++ {
 
@@ -452,13 +458,11 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 									}
 								}
 							}
-						} else {
-							valid = false
-						}
 
-						if valid {
-							found = true
-							r.Run(w, req, handler, ctx)
+							if valid {
+								found = true
+								r.Run(w, req, handler, ctx)
+							}
 						}
 					}
 				}

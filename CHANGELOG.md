@@ -7,8 +7,22 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ---
 
-## [1.0.2] – 2025-04-20
 
+
+
+## [1.0.3] – 2025-04-21
+
+### Fixed
+
+ - Critical logic bug in parameter matching loop:
+ - Routing logic failed to correctly iterate over registered handlers in HandleFunc due to improper nesting and index usage.
+ - This caused certain valid routes (especially parameterized ones) to be skipped or ignored under specific conditions.
+
+### Changed
+ - **Routing performance improved** by correcting traversal logic of nested handler maps (`map[int][]RouteEntry`), ensuring precise matching based on the number of path parameters (`len(patterns)`).
+ - **More accurate dispatching** of parameterized routes by leveraging the correct segment depth (`len(ctx.Segments)`) as routing key.
+
+This patch ensures stable and deterministic matching of all registered routes, especially in deeply nested or heavily parameterized path structures.
 
 ### Added
 
