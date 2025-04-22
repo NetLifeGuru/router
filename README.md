@@ -1,7 +1,7 @@
 [![Go Version](https://img.shields.io/badge/go-%3E=1.19-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
-# 🚀 NetLifeGuru Router v1.0.4
+# 🚀 NetLifeGuru Router v1.0.5
 
 A clean, performant and idiomatic HTTP router & microframework for Go – built for modern backend APIs, apps, and
 full-stack setups.
@@ -830,7 +830,7 @@ This project is open to community contributions and feedback!
 
 Created by Martin Benadik  
 Framework: **NetLifeGuru Router**  
-Version: **v1.0.4**
+Version: **v1.0.5**
 
 ---
 

@@ -31,7 +31,7 @@ type IRouter interface {
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `v1.0.4`
+const serverVersion = `v1.0.5`
 const MethodAny = "ANY"
 
 type Listener struct {

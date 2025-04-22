@@ -7,6 +7,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ---
 
+[1.0.5] – 2025-04-22
+
+### Fixed
+ - Static route handling now correctly checks HTTP method
+ - Previously, static routes were matched based solely on path without validating the HTTP method (e.g. GET, POST). This could cause handlers to run for unintended methods. This fix ensures method validation is consistent across all route types.
+
 ## [1.0.4] – 2025-04-21
 
 ### Added
