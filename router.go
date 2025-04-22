@@ -387,11 +387,16 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	p := req.URL.Path
 	t := r.staticRoutes[p]
+	var found bool
 
 	if t.Route != "" {
-		r.Run(w, req, t.Handler, ctx)
+		method := r.getBitmaskIndex(req.Method)
+		if t.Bitmask&method != 0 {
+			found = true
+			r.Run(w, req, t.Handler, ctx)
+		}
 	} else {
-		var found bool
+
 		var segment string
 
 		start := -1
@@ -459,15 +464,15 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 		}
+	}
 
-		if !found {
-			if r.notFound != nil {
-				r.notFound(w, req, ctx)
-			} else {
-				w.Header().Set("Content-Type", "text/plain")
-				w.WriteHeader(http.StatusNotFound)
-				w.Write([]byte("404 page not found"))
-			}
+	if !found {
+		if r.notFound != nil {
+			r.notFound(w, req, ctx)
+		} else {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("404 page not found"))
 		}
 	}
 }
