@@ -1,7 +1,7 @@
 [![Go Version](https://img.shields.io/badge/go-%3E=1.19-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
-# 🚀 NetLifeGuru Router v1.0.5
+# 🚀 NetLifeGuru Router v1.0.6
 
 A clean, performant and idiomatic HTTP router & microframework for Go – built for modern backend APIs, apps, and
 full-stack setups.
@@ -13,11 +13,12 @@ multi-port servers.
 
 ## ✨ Features
 
+- 🩺 Healthcheck endpoint `/ready` (enable with `r.Ready()`)
 - 🌐 Custom routing with regex parameters
 - 🧩 Lifecycle middleware: Before, After, Recovery
-- 🗂 Request context with thread-safe storage (pooled)
+- 🗂 Request context with per-request storage (pooled)
 - 🧾 Accessing Query & Form Data
-- 🛡 Simple RateLimit guard (per host)
+- 🛡 Simple RateLimit guard (per client IP + method + path)
 - 📊 Built-in pprof profiling
 - 📁 Static file serving (with favicon.ico support)
 - 🎨 Terminal logging with color output
@@ -40,6 +41,16 @@ go get github.com/NetLifeGuru/router@latest
 
 ## 💡 Basic Usage
 
+### 🩺 Healthcheck
+Enable a simple readiness endpoint:
+
+Call `r.Ready()` to register `GET /ready`, which returns **200 "ok"** while running and **503 "shutting down"** during graceful shutdown.
+
+```go
+    r.Ready()
+    // GET /ready → 200 "ok" (while running), 503 "shutting down" during graceful shutdown
+```
+
 ### 🔄 Single-Server Setup
 
 ```go
@@ -49,6 +60,7 @@ import (
 	"fmt"
 	"net/http"
 	"github.com/NetLifeGuru/router"
+    "time"
 )
 
 func main() {
@@ -75,7 +87,7 @@ r.HandleFunc("/", "GET", func (w http.ResponseWriter, r *http.Request, ctx *rout
     w.WriteHeader(http.StatusOK)
 })
 
-listeners := r.Listeners{
+listeners := router.Listeners{
     {Listen: "localhost:8000", Domain: "localhost:8000"},
     {Listen: "localhost:8001", Domain: "localhost:8001"},
 }
@@ -98,12 +110,16 @@ environments.
 ```go
 r := router.NewRouter()
 
-r.Static("/files/public", "/assets")
+r.Static("files/public", "/assets")
 
 r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
     // Runs before every request
     r.Host = strings.Replace(r.Host, "127.0.0.1", "localhost", 1)
-    r.RateLimit(w, r, 10000) // Drop if too frequent
+	
+    if router.RateLimit(w, r, 10*time.Millisecond) {
+        router.Abort(ctx)
+		return
+    }
 })
 
 r.After(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
@@ -116,29 +132,30 @@ r.Recovery(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 })
 ```
 
-## 🌐 Proxying Frontend Apps (e.g. Next.js)
+## 🌐 Path Prefix Stripping for Frontend Apps (no reverse proxy)
 
-Use `r.Proxy("/app")` to seamlessly forward requests to a frontend app like Next.js running behind a reverse proxy.
+Use `r.Proxy("/app")` to transparently strip the `/app` prefix before your handlers see the request path.
+Note: This does **not** forward requests to a different process/host. For reverse proxying to a Next.js dev server or a separate service, use a real reverse proxy (nginx/Caddy) or implement an `httputil.ReverseProxy` handler.
 
 This enables routing like:
 
 - `http://localhost:8000/app/test`
-- `http://localhost:8000/test` (if handled by the frontend app)
+// (removed; prefix stripping neroutuje neexistujúce cesty mimo prefix)
+
 
 ```go
 r := router.NewRouter()
 
 r.Proxy("/app")
 
-r.Static("/files/public", "/assets")
+r.Static("files/public", "/assets")
 
 ```
 
 ### Use Case:
 
 If you're running a modern frontend (like Next.js, Vite, React, or SvelteKit) with a development or production reverse
-proxy setup, this allows all `/app` routes and assets (e.g., client JS, API calls, static files) to be transparently
-forwarded.
+proxy setup, this allows all `/app` routes and assets (e.g., client JS, API calls, static files) to be served under the rewritten path.
 
 Great for full-stack setups where both backend and frontend are served from the same origin:
 
@@ -161,10 +178,32 @@ If your route uses parameters, you can access them like this:
 
 ```go
 r.HandleFunc("/user/<id:(\\d+)>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    id := ctx.Param("id")
+    id, ok := ctx.Param("id")
+    if !ok {
+        // handle missing param
+        http.Error(w, "missing id", http.StatusBadRequest)
+    return
+    }
     fmt.Fprintf(w, "User ID: %s", id)
 })
 ```
+
+Note:
+Since v1.0.6 ``ctx.Param(key)`` returns (string, bool) instead of only string to make it explicit whether the parameter exists.
+
+### 🗂 Access all parameters at once
+
+You can also retrieve all parameters as a map:
+```go
+r.HandleFunc("/user/<id:(\\d+)>/<slug>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+    params := ctx.ParamMap()
+    fmt.Println(params["id"])
+    fmt.Println(params["slug"])
+})
+```
+
+This is useful when you need to iterate or inspect multiple parameters.
+
 
 ### 🗂 Using `Set` and `Get`
 
@@ -195,7 +234,7 @@ idiomatic.
 err := errors.New("something went wrong")
 
 if router.Error(w, r, "Failed to do something", err) {
-    return
+    return // important: stop handler after writing response
 }
 ```
 
@@ -216,11 +255,17 @@ if router.JSONError(w, r, "Failed to do something", err) {
 - Logs the error internally.
 - Sends a `500 Internal Server Error` with a JSON payload:
 
+Using `JSONResponse`:
+```go
+router.JSONResponse(w, http.StatusOK, yourData, nil)
+router.JSONResponse(w, http.StatusInternalServerError, nil, "Something went wrong")
+```
+Example JSON payloads:
 ```json
-{
-  "error": true,
-  "message": "Failed to do something"
-}
+{"success":true,"data":{"...": "..."},"status":200}
+```
+```json
+{"success":false,"error":"Something went wrong","status":500}
 ```
 
 ### ⚠️ Important
@@ -319,7 +364,7 @@ Plain text:
 
 ```go
 r.NotFound(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    r.Text(w, http.StatusNotFound, "404 - Page Not Found")
+    router.Text(w, http.StatusNotFound, "404 - Page Not Found")
 })
 ```
 
@@ -338,10 +383,10 @@ r.TerminalOutput(true)
 Example output:
 
 ```go
-› NetLifeGuru 1.0.0
+› NetLifeGuru 1.0.6
 › Web servers is running on: http: //localhost:8000
 
-› NetLifeGuru 1.0.0
+› NetLifeGuru 1.0.6
 › Web servers is running on: http: //localhost:8001
 
 2025-04-11 19:34:42:  Method[GET]  localhost:8000/landing in 8µs
@@ -365,20 +410,24 @@ This is especially helpful during development or performance testing.
 
 ## 🛡 RateLimit Guard
 
-Limit requests per host by time threshold (in nanoseconds):
+Limit requests per client by a time threshold (`time.Duration`):
 
 ```go
 r := router.NewRouter()
 
-r.Static("/views", "/assets")
+r.Static("views", "/assets")
 
 r.HandleFunc("/", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
     w.WriteHeader(http.StatusOK)
 })
 
 r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    router.RateLimit(w, r, 10000) // Deny if requests are < 10ms apart
-})
+    // Limit per client IP + method + path by time threshold
+    if router.RateLimit(w, r, 10*time.Millisecond) {
+        router.Abort(ctx) // request was rate-limited; handler short-circuited
+		return
+    }
+ })
 ```
 
 ---
@@ -428,7 +477,7 @@ email := router.Query(r, "email")
 If the URL is:
 
 ```go
-/search?email = test@example.com
+/search?email=test@example.com
 ```
 
 Then email will be:
@@ -504,12 +553,12 @@ Both will behave the same and capture the segment into `ctx.Param("id")`.
 - Matches exactly `one segment` (i.e., a part of the URL between slashes).
 - No pattern is enforced — any string (except `/`) will be accepted.
 - Ideal for IDs, slugs, or simple dynamic paths.
-- If you want to restrict matching (e.g., digits only), add a pattern like `<id:\d+>` or `<id:isDigits>`.
+- If you want to restrict matching (e.g., digits only), add a pattern like `<id:\\d+>` or `<id:isDigits>`.
 
 Use dynamic segments with named regex:
 
 ```go
-r.HandleFunc("/article/<article:([\S]+)>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+r.HandleFunc("/article/<article:([\\S]+)>", "GET", func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
     article := ctx.Param("article")
     fmt.Fprintf(w, "Test ID: %s", article)
 })
@@ -541,7 +590,7 @@ Examples:
 
 | Route                                       |              Description               |
 |:--------------------------------------------|:--------------------------------------:|
-| `/user/<id:(\d+)>`                          |            Only numeric IDs            |
+| `/user/<id:(\\d+)>`                         |            Only numeric IDs            |
 | `/post/<slug:([a-zA-Z0-9\-_]+)>`            | Slug-friendly with hyphens/underscores |
 | `/file/<filename:([\S]+)>/<token:([0-9]+)>` |          More slugs in a row           |
 
@@ -549,24 +598,24 @@ Examples:
 
 You can use them in your routes by either their `regex-like` pattern or `function name`:
 
-| Function     | Pattern           |           Description           |     Example Input      | 
-|:-------------|-------------------|:-------------------------------:|:----------------------:|
-| isLowerAlpha | [a-z]+            |     Lowercase letters only      |         "abc"          |
-| isUpperAlpha | [A-Z]+            |     Uppercase letters only      |         "ABC"          |
-| isAlpha      | [a-zA-Z]+         |    Letters only (mixed case)    |         "Test"         |
-| isDigits     | [0-9]+, \d+       |           Digits only           |        "123456"        |
-| isAlnum      | [a-zA-Z0-9]+      |          Alphanumeric           |        "user42"        |
-| isWord       | \w+               | Letters, digits, underscore (_) |     "hello_world"      |
-| isSlugSafe   | [\w\-]+           | Like isWord, but also allows -  |      "post-title"      |
-| isSlug       | [a-z0-9\-]+       |   Lowercase + digits + - only   |      "my-article"      |
-| isHex        | [a-fA-F0-9]+      |       Hexadecimal string        |         "3fA9"         |
-| isUUID       | 8-4-4-4-12        |           UUID format           |    "a1b2-c3d4-e5f6"    |
-| isSafeText   | [a-zA-Z0-9 _.-]+  | Letters, digits, space, _, ., - |     "File name-1"      |
-| isUpperAlnum | [A-Z0-9]+         |     Uppercase + digits only     |       "ADMIN99"        |
-| isBase64     | a-zA-Z0-9+/=      |       Base64 safe string        |       "SGVsbG8="       |
+| Function     | Pattern          |           Description           |     Example Input      | 
+|:-------------|------------------|:-------------------------------:|:----------------------:|
+| isLowerAlpha | [a-z]+           |     Lowercase letters only      |         "abc"          |
+| isUpperAlpha | [A-Z]+           |     Uppercase letters only      |         "ABC"          |
+| isAlpha      | [a-zA-Z]+        |    Letters only (mixed case)    |         "Test"         |
+| isDigits     | [0-9]+, \d+      |           Digits only           |        "123456"        |
+| isAlnum      | [a-zA-Z0-9]+     |          Alphanumeric           |        "user42"        |
+| isWord       | \w+              | Letters, digits, underscore (_) |     "hello_world"      |
+| isSlugSafe   | [\w\-]+          | Like isWord, but also allows -  |      "post-title"      |
+| isSlug       | [a-z0-9\-]+      |   Lowercase + digits + - only   |      "my-article"      |
+| isHex        | [a-fA-F0-9]+     |       Hexadecimal string        |         "3fA9"         |
+| isUUID       | 8-4-4-4-12       |           UUID format           |    "a1b2-c3d4-e5f6"    |
+| isSafeText   | [a-zA-Z0-9 _.-]+ | Letters, digits, space, _, ., - |     "File name-1"      |
+| isUpperAlnum | [A-Z0-9]+        |     Uppercase + digits only     |       "ADMIN99"        |
+| isBase64     | a-zA-Z0-9+/=     |       Base64 safe string        |       "SGVsbG8="       |
 | isDateYMD    | \d{4}-\d{2}-\d{2} |     Date format YYYY-MM-DD      |      "2025-04-20"      |
-| isSafePath   | [a-zA-Z0-9/._-]+  |       Safe for URL paths        | "img/uploads/logo.png" |
-| any          | .* / alwaysTrue   |         Always matches          |       Any input        |
+| isSafePath   | [a-zA-Z0-9/._-]+ |       Safe for URL paths        | "img/uploads/logo.png" |
+| any          | .* / alwaysTrue  |         Always matches          |       Any input        |
 
 ### Example – Using Named Pattern Matchers
 
@@ -634,7 +683,7 @@ Each route must explicitly define allowed HTTP methods:
 ```go
 r.HandleFunc("/users", "GET", handler)
 r.HandleFunc("/users", "POST", handler)
-r.HandleFunc("/users/<id:(\d+)>", "PUT", handler)
+r.HandleFunc("/users/<id:(\\d+)>", "PUT", handler)
 ```
 
 Wildcard:
@@ -777,7 +826,7 @@ r := router.NewRouter()
 
 concrete := r.(*router.Router)
 
-r.HandleFunc("test/<a1>/<a2>/<a3>/<a4>/<a5>/<a6>/<a7>/<a8>/<a9>/<a10>/<a11>/<a12>/<a13>/<a14>/<a15>/<a16>/<a17>/<a18>/<a19>/<a20>/<a21>/<a22>/<a23>/<a24>/<a25>/<a26>/<a27>/<a28>/<a29>/<a30>/<a31>/<a32>/<a33>/<a34>/<a35>/<a36>/<a37>/<a38>/<a39>/<a40>/<a41>/<a42>/<a43>/<a44>/<a45>/<a46>/<a47>/<a48>/<a49>/<a50>/<a51>", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+r.HandleFunc("/test/<a1>/<a2>/<a3>/<a4>/<a5>/<a6>/<a7>/<a8>/<a9>/<a10>/<a11>/<a12>/<a13>/<a14>/<a15>/<a16>/<a17>/<a18>/<a19>/<a20>/<a21>/<a22>/<a23>/<a24>/<a25>/<a26>/<a27>/<a28>/<a29>/<a30>/<a31>/<a32>/<a33>/<a34>/<a35>/<a36>/<a37>/<a38>/<a39>/<a40>/<a41>/<a42>/<a43>/<a44>/<a45>/<a46>/<a47>/<a48>/<a49>/<a50>/<a51>", "GET", func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 testHandler(w, r)
 })
 
@@ -830,7 +879,7 @@ This project is open to community contributions and feedback!
 
 Created by Martin Benadik  
 Framework: **NetLifeGuru Router**  
-Version: **v1.0.5**
+Version: **v1.0.6**
 
 ---
 

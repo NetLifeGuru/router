@@ -1,16 +1,25 @@
 package router
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"log"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/signal"
 	"regexp"
 	"regexp/syntax"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -28,11 +37,11 @@ type IRouter interface {
 	EnableProfiling(EnableProfiling string)
 	TerminalOutput(terminalOutput bool)
 	NotFound(fn HandlerFunc)
+	Ready()
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `v1.0.5`
-const MethodAny = "ANY"
+const serverVersion = `v1.0.6`
 
 type Listener struct {
 	Listen string
@@ -43,28 +52,47 @@ type Listener struct {
 type Listeners []Listener
 
 type Pattern struct {
-	Name          string
 	Slug          string
 	Type          int
 	RegexCompiled *regexp.Regexp
 	Fn            MatchFunc
 }
 
+type Group struct {
+	Slug string
+}
+
+type StaticSegments struct {
+	Slug  string
+	Order int
+}
+
 type StaticMap map[string]http.Handler
 
 type RouteEntry struct {
-	Route    string
-	Patterns []Pattern
-	Handler  HandlerFunc
-	Bitmask  int
+	Route      string
+	Patterns   []Pattern
+	Handler    HandlerFunc
+	Bitmask    int
+	Validation bool
 }
 
 type RouteIndex map[int]map[int]RouteEntry
 type Routes map[string]RouteIndex
 type StaticRoutes map[string]RouteEntry
 
+type node struct {
+	depth    int
+	segment  string
+	next     string
+	children map[string]*node
+}
+
 type Router struct {
 	routes         Routes
+	root           *node
+	roots          map[int]*RadixNode
+	radixRoot      *RadixNode
 	staticRoutes   StaticRoutes
 	mux            *http.ServeMux
 	beforeHandlers []HandlerFunc
@@ -74,12 +102,16 @@ type Router struct {
 	terminalOutput bool
 	proxySegment   string
 	staticFiles    StaticMap
-	regex          *regexp.Regexp
+	ready          atomic.Bool
 }
 
 func NewRouter() IRouter {
-	return &Router{
-		routes:         make(Routes),
+	r := &Router{
+		routes: make(Routes),
+		root: &node{
+			children: make(map[string]*node),
+		},
+		radixRoot:      &RadixNode{},
 		staticRoutes:   make(StaticRoutes),
 		mux:            http.NewServeMux(),
 		beforeHandlers: []HandlerFunc{},
@@ -89,23 +121,22 @@ func NewRouter() IRouter {
 		terminalOutput: false,
 		proxySegment:   "",
 		staticFiles:    make(StaticMap),
-		regex:          regexp.MustCompile(`(([\p{L}0-9\-._~%]+)/)|(<(.*?)>/)|({(.*?)}/)`),
 	}
+
+	r.ready.Store(true)
+
+	return r
+}
+
+func (r *Router) SetReady(ready bool) {
+	r.ready.Store(ready)
+}
+
+func (r *Router) IsReady() bool {
+	return r.ready.Load()
 }
 
 type contextKey string
-
-const routeParamsKey contextKey = "routeParams"
-
-func (r *Router) validateMethod(allowedMethods string, requestMethod string) bool {
-	methods := strings.Split(allowedMethods, ",")
-	for i := 0; i < len(methods); i++ {
-		if methods[i] == MethodAny || strings.TrimSpace(methods[i]) == requestMethod {
-			return true
-		}
-	}
-	return false
-}
 
 const (
 	_STRING = iota + 1
@@ -140,93 +171,150 @@ func (r *Router) findPatterns(str string) MatchFunc {
 	return nil
 }
 
-func (r *Router) parseSlug(isStatic bool, s string, url string) (Pattern, bool) {
-
-	var str string
+func (r *Router) parseSlug(isStatic, reqValidation bool, s, url string) (Pattern, bool, bool) {
 	var slugPattern Pattern
 
-	if (len(s) >= 2 && s[0] == '<' && s[len(s)-1] == '>') || (len(s) >= 2 && s[0] == '{' && s[len(s)-1] == '}') {
+	if (len(s) >= 2 && (s[0] == '<' && s[len(s)-1] == '>')) || (len(s) >= 2 && (s[0] == '{' && s[len(s)-1] == '}')) {
 		isStatic = false
-		str = s[1 : len(s)-1]
+		str := s[1 : len(s)-1]
 
-		pt := ""
-		for i := 0; i < len(s); i++ {
-			if s[i] == ':' {
-				slugPattern.Slug = str[0 : i-1]
-				pt = str[i:]
-				break
+		name := str
+		pt := "any"
+
+		if i := strings.IndexByte(str, ':'); i != -1 {
+			name = str[:i]
+			if i+1 < len(str) {
+				pt = str[i+1:]
 			} else {
-				pt = "any"
+				pt = ""
 			}
+		}
+
+		slugPattern.Slug = name
+		if pt == "" {
+			fmt.Printf("Error: Empty pattern in URL segment %q (route %s)\n", s, url)
+			os.Exit(3)
+		}
+		if pt != "any" {
+			reqValidation = true
 		}
 
 		if c := countCaptureGroups(pt); c > 0 {
 			//FindAllStringSubmatch
 			if _, err := syntax.Parse(pt, syntax.PerlX); err != nil {
-				fmt.Printf("Error: Wrong regular expression %s in URL pattern %s\n", pt, url)
+				fmt.Printf("Error: Wrong regular expression %q in URL pattern %s\n", pt, url)
 				os.Exit(3)
 			}
 			slugPattern.RegexCompiled = regexp.MustCompile("^" + pt + "$")
 			slugPattern.Type = _SUBMATCH
 		} else {
 			//Match
-			slugPattern.Fn = r.findPatterns(pt)
-
-			if slugPattern.Fn == nil {
+			if fn := r.findPatterns(pt); fn != nil {
+				slugPattern.Fn = fn
+				slugPattern.Type = _PATTERN
+			} else {
 				if _, err := syntax.Parse(pt, syntax.PerlX); err != nil {
-					fmt.Printf("Error: Wrong regular expression %s in URL pattern %s\n", pt, url)
+					fmt.Printf("Error: Wrong regular expression %q in URL pattern %s\n", pt, url)
 					os.Exit(3)
 				}
 				slugPattern.RegexCompiled = regexp.MustCompile("^" + pt + "$")
 				slugPattern.Type = _MATCH
-			} else {
-				slugPattern.Type = _PATTERN
 			}
 		}
-
-	} else {
-		slugPattern.Slug = s
-		slugPattern.Type = _STRING
+		return slugPattern, isStatic, reqValidation
 	}
 
-	return slugPattern, isStatic
+	slugPattern.Slug = s
+	slugPattern.Type = _STRING
+	return slugPattern, isStatic, reqValidation
 }
 
-func (r *Router) preparePattern(url string) (string, []Pattern, bool) {
-	parts := make([]string, 0, 5)
+func splitPath(path string) []string {
+	var segments []string
+	start := -1
 
-	if url != "/" {
-		matches := r.regex.FindAllStringSubmatch(url+`/`, -1)
-		for i := 0; i < len(matches); i++ {
-			part := matches[i][0][:len(matches[i][0])-1]
-			parts = append(parts, part)
+	for i := 0; i < len(path); i++ {
+		if path[i] != '/' {
+			if start == -1 {
+				start = i
+			}
+		} else if start != -1 {
+			segments = append(segments, path[start:i])
+			start = -1
 		}
-	} else {
-		return "", nil, true
 	}
 
-	first := parts[0]
+	if start != -1 {
+		segments = append(segments, path[start:])
+	}
 
-	var patterns []Pattern
+	return segments
+}
 
-	var isStatic = true
-	for i := 0; i < len(parts); i++ {
-		p, st := r.parseSlug(isStatic, parts[i], url)
+func (r *Router) preparePattern(url string) (string, []Pattern, bool, bool, string) {
+	var (
+		first         string
+		patterns      []Pattern
+		isStatic      = true
+		reqValidation = false
+	)
+
+	segments := splitPath(url)
+	current := r.root
+
+	var parts []string
+	parts = make([]string, 0, len(segments))
+
+	for depth, seg := range segments {
+		if seg == "" {
+			continue
+		}
+
+		if first == "" {
+			first = seg
+		}
+
+		p, st, rv := r.parseSlug(isStatic, reqValidation, seg, url)
+
+		slugPart := p.Slug
+
+		if p.Type != _STRING {
+			slugPart = "*"
+		}
+		parts = append(parts, slugPart)
+
 		isStatic = st
+		reqValidation = rv
 		patterns = append(patterns, p)
+
+		if seg[0] != '<' && seg[0] != '{' {
+			child, ok := current.children[seg]
+			if !ok {
+				child = &node{
+					depth:    depth,
+					segment:  seg,
+					children: make(map[string]*node),
+				}
+				current.children[seg] = child
+			}
+			current = child
+		}
 	}
 
-	return first, patterns, isStatic
+	radixURL := "/" + strings.Join(parts, "/")
+
+	return first, patterns, isStatic, reqValidation, radixURL
 }
 
 func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
-	route, patterns, isStatic := r.preparePattern(url)
+	route, patterns, isStatic, reqValidation, radixURL := r.preparePattern(url)
 
 	entry := RouteEntry{
-		Route:    url,
-		Patterns: patterns,
-		Handler:  fn,
-		Bitmask:  r.bitmask(url, methods),
+		Route:      url,
+		Patterns:   patterns,
+		Handler:    fn,
+		Bitmask:    r.bitmask(url, methods),
+		Validation: reqValidation,
 	}
 
 	if isStatic {
@@ -249,6 +337,9 @@ func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
 
 		r.routes[route][depth][l] = entry
 	}
+
+	r.insertNode(radixURL, entry)
+
 }
 
 func (r *Router) Static(dir string, replace string) {
@@ -256,7 +347,8 @@ func (r *Router) Static(dir string, replace string) {
 		replace += "/"
 	}
 
-	err := directoryExists(fmt.Sprintf("./%s", dir))
+	err := ensureDirectory(fmt.Sprintf("./%s", dir))
+
 	if err != nil {
 		log.Printf("Failed to create directory %s", err)
 	}
@@ -349,6 +441,9 @@ func (r *Router) Run(w http.ResponseWriter, req *http.Request, handler HandlerFu
 
 	for i := 0; i < len(r.beforeHandlers); i++ {
 		r.beforeHandlers[i](w, req, ctx)
+		if ctx.Aborted() {
+			return
+		}
 	}
 
 	if r.terminalOutput {
@@ -361,11 +456,50 @@ func (r *Router) Run(w http.ResponseWriter, req *http.Request, handler HandlerFu
 
 	for i := 0; i < len(r.afterHandlers); i++ {
 		r.afterHandlers[i](w, req, ctx)
+		if ctx.Aborted() {
+			return
+		}
 	}
 }
 
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (r *Router) write405(w http.ResponseWriter, mask int) {
+	allow := r.maskToAllowHeader(mask)
+	if allow != "" {
+		w.Header().Set("Allow", allow)
+	}
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	_, _ = w.Write([]byte("405 method not allowed"))
+}
 
+func (r *Router) maskToAllowHeader(mask int) string {
+	var m []string
+	if mask&GET != 0 {
+		m = append(m, "GET")
+	}
+	if mask&POST != 0 {
+		m = append(m, "POST")
+	}
+	if mask&PUT != 0 {
+		m = append(m, "PUT")
+	}
+	if mask&DELETE != 0 {
+		m = append(m, "DELETE")
+	}
+	if mask&PATCH != 0 {
+		m = append(m, "PATCH")
+	}
+	if mask&HEAD != 0 {
+		m = append(m, "HEAD")
+	}
+	if mask&OPTIONS != 0 {
+		m = append(m, "OPTIONS")
+	}
+	return strings.Join(m, ", ")
+}
+
+var notFound = []byte("404 page not found")
+
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx := GetContext()
 
 	defer func() {
@@ -385,19 +519,25 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		PutContext(ctx)
 	}()
 
+	var foundPath bool
+	var allowedMask int
+
 	p := req.URL.Path
 	t := r.staticRoutes[p]
-	var found bool
 
 	if t.Route != "" {
-		method := r.getBitmaskIndex(req.Method)
-		if t.Bitmask&method != 0 {
-			found = true
-			r.Run(w, req, t.Handler, ctx)
-		}
-	} else {
 
-		var segment string
+		method := r.getBitmaskIndex(req.Method)
+
+		if t.Bitmask&method != 0 {
+			r.Run(w, req, t.Handler, ctx)
+			return
+		}
+
+		r.write405(w, t.Bitmask)
+		return
+
+	} else if ok := r.searchAll(p, ctx); ok {
 
 		start := -1
 
@@ -407,72 +547,75 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					start = j
 				}
 			} else if start != -1 {
-
 				ctx.Segments = append(ctx.Segments, Seg{p[start:j]})
 				start = -1
 			}
 		}
 
+		foundPath = false
+		allowedMask = 0
+
 		if start != -1 {
 
 			ctx.Segments = append(ctx.Segments, Seg{p[start:]})
 
-			if handlers, ok := r.routes[ctx.Segments[0].Value][len(ctx.Segments)]; ok {
+			bitmask := r.getBitmaskIndex(req.Method)
 
-				method := r.getBitmaskIndex(req.Method)
+		outer:
+			for _, entry := range ctx.Entries {
+				foundPath = true
+				allowedMask |= entry.Bitmask
 
-				for i := 0; i < len(handlers); i++ {
-					entry := handlers[i]
-					if entry.Bitmask&method == 0 {
-						continue
-					}
+				if entry.Bitmask&bitmask == 0 {
+					continue
+				}
 
-					handler := entry.Handler
-					patterns := entry.Patterns
-					valid := true
-					for z := 1; z < len(ctx.Segments); z++ {
-						segment = ctx.Segments[z].Value
-						p := patterns[z]
-
-						switch p.Type {
-						case _STRING:
-							if segment != p.Slug {
-								valid = false
-							}
-						case _MATCH:
-							if !p.RegexCompiled.MatchString(segment) {
-								valid = false
-							}
-						case _PATTERN:
-							if !p.Fn(segment) {
-								valid = false
-							}
-						case _SUBMATCH:
-							if len(p.RegexCompiled.FindStringSubmatch(segment)) == 0 {
-								valid = false
+				var segment string
+				if entry.Validation {
+					for depth, p := range entry.Patterns {
+						segment = ctx.Segments[depth].Value
+						if p.Type != _STRING {
+							switch p.Type {
+							case _MATCH:
+								if !p.RegexCompiled.MatchString(segment) {
+									continue outer
+								}
+							case _PATTERN:
+								if !p.Fn(segment) {
+									continue outer
+								}
+							case _SUBMATCH:
+								if len(p.RegexCompiled.FindStringSubmatch(segment)) == 0 {
+									continue outer
+								}
 							}
 						}
-						if valid {
-							ctx.Params = append(ctx.Params, Par{p.Slug, segment})
-						}
-					}
-
-					if valid {
-						found = true
-						r.Run(w, req, handler, ctx)
 					}
 				}
+
+				ctx.Params = ctx.Params[:0]
+				ctx.paramMap = nil
+				ctx.Entries = ctx.Entries[:0]
+				ctx.Entries = append(ctx.Entries, entry)
+
+				r.Run(w, req, entry.Handler, ctx)
+				return
 			}
 		}
 	}
 
-	if !found {
-		if r.notFound != nil {
-			r.notFound(w, req, ctx)
-		} else {
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte("404 page not found"))
+	if foundPath {
+		r.write405(w, allowedMask)
+		return
+	}
+
+	if r.notFound != nil {
+		r.notFound(w, req, ctx)
+	} else {
+		w.WriteHeader(http.StatusNotFound)
+		_, err := w.Write(notFound)
+		if err != nil {
+			return
 		}
 	}
 }
@@ -480,17 +623,20 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (r *Router) Handler() http.HandlerFunc {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 
-		for prefix, staticHandler := range r.staticFiles {
-			path := req.URL.Path
-			pl := len(prefix)
-			if len(path) >= pl && path[:pl] == prefix {
-				staticHandler.ServeHTTP(w, req)
-				return
+		path := req.URL.Path
+		best := ""
+		var bestH http.Handler
+		for prefix, h := range r.staticFiles {
+			if strings.HasPrefix(path, prefix) && len(prefix) > len(best) {
+				best, bestH = prefix, h
 			}
+		}
+		if bestH != nil {
+			bestH.ServeHTTP(w, req)
+			return
 		}
 
 		if r.proxySegment != "" {
-			path := req.URL.Path
 			seg := r.proxySegment
 			segLen := len(seg)
 			if len(path) >= segLen && path[:segLen] == seg {
@@ -507,52 +653,196 @@ func (r *Router) Handler() http.HandlerFunc {
 	return handler
 }
 
-func (r *Router) MultiListenAndServe(listeners Listeners) {
-
-	var wg sync.WaitGroup
-
-	for i := 0; i < len(listeners); i++ {
-		proxy := listeners[i]
-		var (
-			listen  = proxy.Listen
-			portStr = strings.Split(listen, ":")[1]
-			domain  = proxy.Domain
-		)
-
-		port, err := strconv.Atoi(portStr)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		wg.Add(1)
-		go func(p int, t string) {
-			defer wg.Done()
-
-			if r.terminalOutput {
-				printServerInfo(serverName, serverVersion, port)
-			}
-
-			err := http.ListenAndServe(listen, r.Handler())
-
+func (r *Router) Ready() {
+	r.HandleFunc("/ready", "GET", func(w http.ResponseWriter, req *http.Request, ctx *Context) {
+		if r.IsReady() {
+			w.WriteHeader(http.StatusOK)
+			_, err := w.Write([]byte("ok"))
 			if err != nil {
-				log.Fatal(err)
+				return
 			}
+		} else {
+			http.Error(w, "shutting down", http.StatusServiceUnavailable)
+		}
+	})
+}
 
-		}(port, domain)
+func (r *Router) MultiListenAndServe(listeners Listeners) {
+	debug.SetGCPercent(300)
+
+	workers := runtime.NumCPU()
+	runtime.GOMAXPROCS(workers)
+
+	if r.terminalOutput {
+		Log("INFO", "Using %d CPU core%s", workers, map[bool]string{true: "s", false: ""}[workers != 1])
 	}
 
+	var (
+		wg      sync.WaitGroup
+		servers []*http.Server
+		mu      sync.Mutex
+	)
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	for _, ln := range listeners {
+		listenAddr := ln.Listen
+
+		_, portStr, err := net.SplitHostPort(listenAddr)
+		if err != nil {
+			log.Fatalf("Invalid listen address %s: %v", listenAddr, err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			log.Fatalf("Invalid port format for %s: %v", listenAddr, err)
+		}
+
+		if r.terminalOutput {
+			printServerInfo(serverName, serverVersion, port)
+		}
+
+		useReusePort := runtime.GOOS != "windows"
+		var reuseErr error
+
+		var probe net.Listener
+		if useReusePort {
+			lc := net.ListenConfig{
+				Control: func(network, address string, c syscall.RawConn) error {
+					var sockErr error
+					if err := c.Control(func(fd uintptr) {
+						_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+						if e := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1); e != nil {
+							sockErr = e
+						}
+					}); err != nil {
+						return err
+					}
+					return sockErr
+				},
+			}
+			probe, reuseErr = lc.Listen(context.Background(), "tcp", listenAddr)
+			if reuseErr == nil {
+				_ = probe.Close()
+			}
+		}
+
+		if useReusePort && reuseErr == nil {
+			for i := 0; i < workers; i++ {
+				wg.Add(1)
+				go func(addr string) {
+					defer wg.Done()
+
+					lc := net.ListenConfig{
+						Control: func(network, address string, c syscall.RawConn) error {
+							var sockErr error
+							if err := c.Control(func(fd uintptr) {
+								_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+								if e := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1); e != nil {
+									sockErr = e
+								}
+							}); err != nil {
+								return err
+							}
+							return sockErr
+						},
+					}
+
+					raw, err := lc.Listen(context.Background(), "tcp", addr)
+					if err != nil {
+						if r.terminalOutput {
+							Log("ERROR", "REUSEPORT listen failed on %s: %v", addr, err)
+						}
+						return
+					}
+
+					listener := raw
+
+					server := &http.Server{
+						Handler:           r.Handler(),
+						ReadTimeout:       5 * time.Second,
+						WriteTimeout:      10 * time.Second,
+						IdleTimeout:       120 * time.Second,
+						ReadHeaderTimeout: 2 * time.Second,
+					}
+
+					mu.Lock()
+					servers = append(servers, server)
+					mu.Unlock()
+
+					if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+						if r.terminalOutput {
+							Log("ERROR", "Server error on %s: %v", addr, err)
+						}
+					}
+				}(listenAddr)
+			}
+		} else {
+
+			if r.terminalOutput && reuseErr != nil {
+				Log("WARN", "REUSEPORT unavailable on %s: %v; falling back to single listener", listenAddr, reuseErr)
+			}
+
+			wg.Add(1)
+			go func(addr string) {
+				defer wg.Done()
+
+				l, err := net.Listen("tcp", addr)
+				if err != nil {
+					log.Fatalf("Failed to listen on %s: %v", addr, err)
+				}
+
+				server := &http.Server{
+					Handler:           r.Handler(),
+					ReadTimeout:       5 * time.Second,
+					WriteTimeout:      10 * time.Second,
+					IdleTimeout:       120 * time.Second,
+					ReadHeaderTimeout: 2 * time.Second,
+				}
+
+				mu.Lock()
+				servers = append(servers, server)
+				mu.Unlock()
+
+				if err := server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					if r.terminalOutput {
+						Log("ERROR", "Server error on %s: %v", addr, err)
+					}
+				}
+			}(listenAddr)
+		}
+	}
+
+	<-stop
+	r.SetReady(false)
+	if r.terminalOutput {
+		Log("INFO", "Shutdown signal received. Shutting down servers...")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	mu.Lock()
+	for _, srv := range servers {
+		go func(s *http.Server) {
+			if err := s.Shutdown(shutdownCtx); err != nil && r.terminalOutput {
+				Log("WARN", "Server shutdown error: %v", err)
+			}
+		}(srv)
+	}
+	mu.Unlock()
+
 	wg.Wait()
+
+	if r.terminalOutput {
+		Log("INFO", "All servers shut down gracefully.")
+	}
 }
 
 func (r *Router) ListenAndServe(port int) {
 
-	if r.terminalOutput {
-		printServerInfo(serverName, serverVersion, port)
-	}
-
-	err := http.ListenAndServe(fmt.Sprintf("localhost:%d", port), r.Handler())
-
-	if err != nil {
-		log.Fatal(err)
-	}
+	listen := fmt.Sprintf("localhost:%d", port)
+	r.MultiListenAndServe(Listeners{
+		{Listen: listen, Domain: listen},
+	})
 }

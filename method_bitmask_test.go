@@ -47,6 +47,7 @@ func TestRemoveDuplicates(t *testing.T) {
 }
 
 func TestIndexToBit(t *testing.T) {
+	r := &dummyRouter{}
 	tests := map[int]int{
 		GET:     0,
 		POST:    1,
@@ -60,7 +61,7 @@ func TestIndexToBit(t *testing.T) {
 	}
 
 	for input, expected := range tests {
-		got := indexToBit(input)
+		got := r.indexToBit(input)
 		if got != expected {
 			t.Errorf("indexToBit(%d) = %d, want %d", input, got, expected)
 		}
@@ -68,6 +69,7 @@ func TestIndexToBit(t *testing.T) {
 }
 
 func TestGetBitmaskIndex(t *testing.T) {
+	r := &dummyRouter{}
 	tests := map[string]int{
 		"GET":     1,
 		"POST":    2,
@@ -80,7 +82,7 @@ func TestGetBitmaskIndex(t *testing.T) {
 	}
 
 	for method, expected := range tests {
-		got := getBitmaskIndex(method)
+		got := r.getBitmaskIndex(method)
 		if got != expected {
 			t.Errorf("getBitmaskIndex(%q) = %d, want %d", method, got, expected)
 		}

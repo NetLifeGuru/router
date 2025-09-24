@@ -25,6 +25,8 @@ type Msg struct {
 	StatusCode int    `json:"statusCode"`
 }
 
+const routeParamsKey contextKey = "routeParams"
+
 func JSONResponse(w http.ResponseWriter, status int, payload any, errMsg any) {
 	response := ApiResponse{
 		Success: errMsg == nil,
@@ -75,7 +77,7 @@ func JSON(w http.ResponseWriter, status int, data any) {
 	_, _ = w.Write(jsonData)
 }
 
-func directoryExists(path string) error {
+func ensureDirectory(path string) error {
 	info, err := os.Stat(path)
 
 	if os.IsNotExist(err) {
@@ -97,25 +99,16 @@ func directoryExists(path string) error {
 }
 
 func openFile(directory string, filename string) *os.File {
-
-	err := directoryExists(fmt.Sprintf("%s%s", "./", directory))
-
-	if err != nil {
-		log.Printf("Failed to create directory %s", err)
+	if err := ensureDirectory("./" + directory); err != nil {
+		log.Printf("Failed to create directory %s: %v", directory, err)
 	}
 
-	var filepath = fmt.Sprintf("%s/%s", directory, filename)
-
+	filepath := fmt.Sprintf("%s/%s", directory, filename)
 	logFile, err := os.OpenFile(filepath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-
 	if err != nil {
-		log.Printf("Failed to open or create file %s: %s", filename, err)
+		log.Printf("Failed to open or create file %s: %v", filepath, err)
+		return nil
 	}
-
-	if err != nil {
-		log.Printf("Failed to create %s: %s", filename, err)
-	}
-
 	return logFile
 }
 

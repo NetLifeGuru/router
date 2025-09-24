@@ -62,8 +62,7 @@ func formatText(data FormatText) string {
 func printServerInfo(serverName string, serverVersion string, port int) {
 	info := fmt.Sprintf("\n› %s\n› %s\n",
 		formatText(FormatText{color: "green", text: serverName + ` ` + serverVersion}),
-		`Web servers is running on: `+fmt.Sprintf("http://localhost:%d", port),
-	)
+		`Web servers is running on: `+fmt.Sprintf("http://localhost:%d", port))
 
 	fmt.Println(info)
 }
@@ -73,6 +72,30 @@ func terminalOutput(path string, method string, message any, errors string) {
 		getTextColor("green")+time.Now().Format("2006-01-02 15:04:05")+"\033[0m",
 		colors("red", "Panic occurred on URL:"), path,
 		colors("red", "Method:"), method,
-		colors("red", "Error message:"), message, errors,
-	)
+		colors("red", "Error message:"), message, errors)
+}
+
+func Log(level string, message string, args ...any) {
+	var color string
+
+	switch level {
+	case "INFO":
+		color = "cyan"
+	case "WARN":
+		color = "yellow"
+	case "ERROR":
+		color = "red"
+	case "DEBUG":
+		color = "magenta"
+	default:
+		color = "default"
+	}
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	formattedMessage := fmt.Sprintf(message, args...)
+
+	fmt.Printf("› %s %s %s\n",
+		getTextColor("green")+timestamp+"\033[0m",
+		colors(color, fmt.Sprintf("[%s]", level)),
+		formattedMessage)
 }

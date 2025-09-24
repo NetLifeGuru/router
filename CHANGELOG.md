@@ -7,7 +7,73 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ---
 
-[1.0.5] – 2025-04-22
+## [1.0.6] – 2025-09-24
+
+### Added
+- **Rewritten `MultiListenAndServe`**
+    - Uses all available CPU cores (`runtime.GOMAXPROCS`) automatically.
+    - On Unix systems enables **`SO_REUSEPORT` + `SO_REUSEADDR`** for true multi-listener concurrency per port.
+    - Built-in graceful shutdown with signal handling (`os.Interrupt`/`SIGTERM`) and per-server timeouts (`ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `ReadHeaderTimeout`).
+    - Logs CPU core usage when `TerminalOutput(true)` is enabled.
+- **Healthcheck endpoint `/ready`** (via `r.Ready()`): returns `200 OK` while running and `503 Service Unavailable` during graceful shutdown.
+- **Radix tree routing index** for faster parameter and wildcard matching.
+- **405 Method Not Allowed** responses with correct `Allow` header when a route matches but method does not.
+- **Internal readiness flag** (atomic) backing `/ready`.
+- **Early-abort flow**: `router.Abort(ctx)` now respected even `Before` or `After` handlers.
+
+### Changed
+- **Routing**
+    - Replaced regex-based URL splitting with manual segment parsing (fewer allocations, faster).
+    - Parameter validation now only runs if the segment uses something other than `any`.
+- **Rate limiting API**
+    - Signature changed from `RateLimit(w, r, threshold int64 /*ns*/)` to `RateLimit(w, r, threshold time.Duration) bool`.
+    - Limit is now **per client IP + method + path** (previously per host only).
+    - When throttled, responds with **HTTP 429 Too Many Requests** + `Retry-After` instead of blocking with `sleep()`.
+- **Context**
+    - `Param(key)` now returns `(string, bool)` instead of only string.
+    - Added `ParamMap()` and internal lazy parameter setting.
+    - Context pooling aggressively resets per request.
+- **Static files**
+    - Uses `ensureDirectory()` and consistent relative paths; automatically serves `favicon.ico` if present.
+- **Logging**
+    - Cleaner request log output (ns/µs/ms) and startup banner.
+
+### Removed
+- **Legacy listener networking** in multi-server mode.  
+  On Unix, multi-listener with `SO_REUSEPORT` replaces the old “one listener per port” model.
+- **Global per-host rate-limiting with blocking sleep** — replaced by non-blocking 429 response.
+- **Group API** removed from public interface.
+
+### Fixed
+- Static routes now consistently respect HTTP methods (follow-up to 1.0.5).
+- More robust recovery handler with secondary `recover` wrapper to avoid panics during panic handling.
+
+### Performance
+- **Radix routing** significantly improves candidate selection for deep or complex paths.
+- Fewer allocations when parsing paths and building cache keys.
+- Higher throughput on Unix thanks to multiple listener workers via `SO_REUSEPORT`.
+
+### Migration
+- **RateLimit** usage:
+  ```diff
+  - router.RateLimit(w, r, 10000) // nanoseconds
+  + if router.RateLimit(w, r, 10*time.Millisecond) {
+  +   ctx.Abort()
+  +   return
+  + }
+### Context params:
+ ```diff
+ - id := ctx.Param("id")
+ + id, ok := ctx.Param("id")
+ + if !ok { /* handle missing */ }
+ ```
+
+or use ctx.ParamMap().
+
+- Always return immediately after calling ctx.Abort() inside middleware.
+- For reverse proxying to a separate process, continue to use nginx/Caddy or ``httputil.ReverseProxy``; the router’s ``Proxy`` only strips prefixes.
+
+## [1.0.5] – 2025-04-22
 
 ### Fixed
  - Static route handling now correctly checks HTTP method
