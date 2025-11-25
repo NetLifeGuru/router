@@ -18,6 +18,7 @@ type Context struct {
 	Segments []Seg
 	Data     map[string]any
 	Entries  []RouteEntry
+
 	paramMap map[string]string
 	aborted  bool
 }
@@ -48,6 +49,7 @@ func (c *Context) SetParams() {
 	if len(c.Params) > 0 {
 		return
 	}
+
 	if len(c.Entries) == 0 {
 		return
 	}
@@ -56,95 +58,79 @@ func (c *Context) SetParams() {
 
 	if cap(c.Params) < len(entry.Patterns) {
 		c.Params = make([]Par, 0, len(entry.Patterns))
+	} else {
+		c.Params = c.Params[:0]
 	}
 
 	for depth, p := range entry.Patterns {
 		if p.Type == _STRING {
 			continue
 		}
-
 		if depth >= len(c.Segments) {
 			break
 		}
+
 		segment := c.Segments[depth].Value
-		c.Params = append(c.Params, Par{Key: p.Slug, Value: segment})
+		c.Params = append(c.Params, Par{
+			Key:   p.Slug,
+			Value: segment,
+		})
 	}
 }
 
 func (c *Context) Param(key string) (string, bool) {
-
-	c.SetParams()
-
-	for i := range c.Params {
-		if c.Params[i].Key == key {
-			return c.Params[i].Value, true
-		}
+	m := c.ParamMap()
+	if m == nil {
+		return "", false
 	}
-	return "", false
+	v, ok := m[key]
+	return v, ok
 }
 
 func (c *Context) ParamMap() map[string]string {
+	if c.paramMap != nil {
+		return c.paramMap
+	}
 
 	c.SetParams()
 
-	if c.paramMap == nil {
-		m := make(map[string]string, len(c.Params))
-		for _, p := range c.Params {
-			m[p.Key] = p.Value
-		}
-		c.paramMap = m
+	if len(c.Params) == 0 {
+		c.paramMap = map[string]string{}
+		return c.paramMap
 	}
+
+	m := make(map[string]string, len(c.Params))
+	for _, p := range c.Params {
+		m[p.Key] = p.Value
+	}
+	c.paramMap = m
+
 	return c.paramMap
 }
 
 func (c *Context) reset() {
-
 	c.aborted = false
+	c.paramMap = nil
 
-	if len(c.Params) > 0 {
-		for i := range c.Params {
-			c.Params[i] = Par{}
-		}
-		c.Params = c.Params[:0]
+	if cap(c.Params) > 1024 {
+		c.Params = make([]Par, 0, 8)
 	} else {
 		c.Params = c.Params[:0]
 	}
 
-	if len(c.Segments) > 0 {
-		for i := range c.Segments {
-			c.Segments[i] = Seg{}
-		}
-		c.Segments = c.Segments[:0]
+	if cap(c.Segments) > 1024 {
+		c.Segments = make([]Seg, 0, 8)
 	} else {
 		c.Segments = c.Segments[:0]
-	}
-
-	if len(c.Entries) > 0 {
-		for i := range c.Entries {
-			c.Entries[i] = RouteEntry{}
-		}
-		c.Entries = c.Entries[:0]
-	} else {
-		c.Entries = c.Entries[:0]
-	}
-
-	if c.Data != nil && len(c.Data) > 0 {
-		for k := range c.Data {
-			delete(c.Data, k)
-		}
 	}
 
 	if cap(c.Entries) > 1024 {
 		c.Entries = make([]RouteEntry, 0, 8)
-	}
-	if cap(c.Params) > 1024 {
-		c.Params = make([]Par, 0, 8)
-	}
-	if cap(c.Segments) > 1024 {
-		c.Segments = make([]Seg, 0, 8)
+	} else {
+		c.Entries = c.Entries[:0]
 	}
 
-	c.paramMap = nil
+	c.Data = nil
 }
 
 var contextPool = sync.Pool{

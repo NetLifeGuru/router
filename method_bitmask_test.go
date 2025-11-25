@@ -133,7 +133,7 @@ func TestHandleRoute(t *testing.T) {
 		}
 	}
 
-	if !r.handleRoute("GET", int(ANY)) {
+	if !r.handleRoute("GET", ANY) {
 		t.Error("Expected handleRoute to return true for ANY method")
 	}
 }

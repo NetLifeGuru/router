@@ -26,7 +26,10 @@ func TestHandleFuncAndServeHTTP(t *testing.T) {
 
 	r.HandleFunc("/hello", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("world"))
+		_, err := w.Write([]byte("world"))
+		if err != nil {
+			return
+		}
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
@@ -46,45 +49,23 @@ func TestHandleFuncAndServeHTTP(t *testing.T) {
 	}
 }
 
-func TestBeforeAfterHandlers(t *testing.T) {
-	r := newTestableRouter()
-
-	calls := []string{}
-
-	r.Before(func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
-		calls = append(calls, "before")
-	})
-
-	r.After(func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
-		calls = append(calls, "after")
-	})
-
-	r.HandleFunc("/test", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
-		calls = append(calls, "handler")
-		w.Write([]byte("done"))
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	expectedOrder := []string{"before", "handler", "after"}
-	for i, call := range expectedOrder {
-		if calls[i] != call {
-			t.Errorf("expected %s at position %d, got %s", call, i, calls[i])
-		}
-	}
-}
-
 func TestRecoveryFromPanic(t *testing.T) {
 
-	defer os.RemoveAll("./logs")
+	defer func() {
+		err := os.RemoveAll("./logs")
+		if err != nil {
+
+		}
+	}()
 
 	r := newTestableRouter()
 
 	r.Recovery(func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
 		w.WriteHeader(http.StatusTeapot)
-		w.Write([]byte("Recovered"))
+		_, err := w.Write([]byte("Recovered"))
+		if err != nil {
+			return
+		}
 	})
 
 	r.HandleFunc("/panic", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
@@ -103,12 +84,15 @@ func TestRecoveryFromPanic(t *testing.T) {
 	}
 }
 
-func TestProxySegmentMiddleware(t *testing.T) {
+func TestPrefixSegmentMiddleware(t *testing.T) {
 	r := NewRouter().(*Router)
-	r.Proxy("/api")
+	r.Prefix("/api")
 
 	r.HandleFunc("/hello", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
-		w.Write([]byte("proxied"))
+		_, err := w.Write([]byte("ok"))
+		if err != nil {
+			return
+		}
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/hello", nil)
@@ -116,18 +100,21 @@ func TestProxySegmentMiddleware(t *testing.T) {
 
 	r.Handler().ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK || w.Body.String() != "proxied" {
-		t.Errorf("proxy segment failed: got %d '%s'", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || w.Body.String() != "ok" {
+		t.Errorf("prefix segment failed: got %d '%s'", w.Code, w.Body.String())
 	}
 }
 
 func TestRegexSegmentRoute(t *testing.T) {
 	r := NewRouter().(*Router)
-	r.Proxy("/api")
+	r.Prefix("/api")
 
 	r.HandleFunc("/article/<article:([a-z]+)>", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
-		article := ctx.Param("article")
-		w.Write([]byte(article))
+		article, _ := ctx.Param("article")
+		_, err := w.Write([]byte(article))
+		if err != nil {
+			return
+		}
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/article/hello", nil)
@@ -136,12 +123,17 @@ func TestRegexSegmentRoute(t *testing.T) {
 
 	fmt.Println(w.Body.String())
 	if w.Code != http.StatusOK || w.Body.String() != "hello" {
-		t.Errorf("proxy segment failed: got %d '%s'", w.Code, w.Body.String())
+		t.Errorf("Prefix segment failed: got %d '%s'", w.Code, w.Body.String())
 	}
 }
 
 func TestStaticFileServing(t *testing.T) {
-	defer os.RemoveAll("files")
+	defer func() {
+		err := os.RemoveAll("files")
+		if err != nil {
+
+		}
+	}()
 
 	dir := "files/public"
 	_ = os.MkdirAll(dir, 0755)
@@ -178,12 +170,18 @@ func TestListenAndServe(t *testing.T) {
 	r := newTestableRouter()
 
 	r.HandleFunc("/ping", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
-		w.Write([]byte("pong"))
+		_, err := w.Write([]byte("pong"))
+		if err != nil {
+			return
+		}
 	})
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		http.Get("http://localhost:8089/ping")
+		_, err := http.Get("http://localhost:8089/ping")
+		if err != nil {
+			return
+		}
 	}()
 
 	go func() {

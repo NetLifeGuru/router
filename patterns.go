@@ -46,7 +46,7 @@ var PatternMatchers = map[string]MatchFunc{
 	`.*`:                alwaysTrue,
 }
 
-func isAny(s string) bool {
+func isAny(string) bool {
 	return true
 }
 

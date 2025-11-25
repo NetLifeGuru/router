@@ -3,8 +3,10 @@ package router
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"runtime"
 	"strings"
@@ -40,42 +42,42 @@ func panicMessage() []string {
 }
 
 func Error(w http.ResponseWriter, req *http.Request, message string, err error) bool {
-	if err != nil {
-		logError(req, message, err, false)
-
-		http.Error(w, message, http.StatusInternalServerError)
-
-		return true
+	if err == nil {
+		return false
 	}
 
-	return false
+	logError(req, message, err, false)
+
+	http.Error(w, message, http.StatusInternalServerError)
+
+	return true
+
 }
 
 func JSONError(w http.ResponseWriter, req *http.Request, message string, err error) bool {
-	if err != nil {
-		logError(req, message, err, false)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-
-		err := json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   true,
-			"message": message,
-		})
-
-		if err != nil {
-			return false
-		}
-
-		return true
+	if err == nil {
+		return false
 	}
-	return false
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":      true,
+		"message":    message,
+		"statusCode": http.StatusInternalServerError,
+	})
+
+	return true
 }
 
 func logError(req *http.Request, message any, err error, terminal bool) {
 	logFile := openFile("logs", (time.Now().Format("2006-01-02"))+".error.log")
-
-	defer closeFile(logFile)
+	var w io.Writer = os.Stderr
+	if logFile != nil {
+		w = logFile
+		defer closeFile(logFile)
+	}
 
 	errors := strings.Join(panicMessage(), "\n")
 
@@ -88,9 +90,9 @@ func logError(req *http.Request, message any, err error, terminal bool) {
 		method = "UNKNOWN"
 	}
 
-	l := log.New(logFile, "", log.LstdFlags)
-	l.Printf("Panic occurred on URL %s | method [%s]\nError message: %s\n%s%s\n\n", path, method, message, errors, strings.Repeat("_", 95))
-
+	l := log.New(w, "", log.LstdFlags)
+	l.Printf("Panic occurred on URL %s | method [%s]\nError message: %s\n%s%s\n\n",
+		path, method, message, errors, strings.Repeat("_", 95))
 	if terminal {
 		terminalOutput(path, method, message, errors)
 	}

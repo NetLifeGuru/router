@@ -27,7 +27,7 @@ func TestIsDigits(t *testing.T) {
 	runMatcherTest(t, isDigits, ok, fail)
 }
 
-func TestIsAlnum(t *testing.T) {
+func TestIsAlNum(t *testing.T) {
 	ok := []string{"abc123", "Test1"}
 	fail := []string{"!", "-", "", "abc_"}
 	runMatcherTest(t, isAlnum, ok, fail)
@@ -69,7 +69,7 @@ func TestIsSafeText(t *testing.T) {
 	runMatcherTest(t, isSafeText, ok, fail)
 }
 
-func TestIsUpperAlnum(t *testing.T) {
+func TestIsUpperAlNum(t *testing.T) {
 	ok := []string{"ABC123", "Z9"}
 	fail := []string{"abc", "a1", "", "_"}
 	runMatcherTest(t, isUpperAlnum, ok, fail)

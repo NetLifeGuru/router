@@ -29,14 +29,16 @@ func TestContextParam(t *testing.T) {
 		},
 	}
 
-	if ctx.Param("id") != "123" {
-		t.Error(`expected Param("id") = "123"`)
+	if v, ok := ctx.Param("id"); !ok || v != "123" {
+		t.Errorf(`expected Param("id") = "123", got %q (ok=%v)`, v, ok)
 	}
-	if ctx.Param("name") != "john" {
-		t.Error(`expected Param("name") = "john"`)
+
+	if v, ok := ctx.Param("name"); !ok || v != "john" {
+		t.Errorf(`expected Param("name") = "john", got %q (ok=%v)`, v, ok)
 	}
-	if ctx.Param("missing") != "" {
-		t.Error(`expected Param("missing") = ""`)
+
+	if v, ok := ctx.Param("missing"); ok || v != "" {
+		t.Errorf(`expected Param("missing") = "" and ok=false, got %q (ok=%v)`, v, ok)
 	}
 }
 

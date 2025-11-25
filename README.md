@@ -1,7 +1,7 @@
 [![Go Version](https://img.shields.io/badge/go-%3E=1.19-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
-# 🚀 NetLifeGuru Router v1.0.6
+# 🚀 NetLifeGuru Router v1.0.7
 
 A clean, performant and idiomatic HTTP router & microframework for Go – built for modern backend APIs, apps, and
 full-stack setups.
@@ -15,7 +15,7 @@ multi-port servers.
 
 - 🩺 Healthcheck endpoint `/ready` (enable with `r.Ready()`)
 - 🌐 Custom routing with regex parameters
-- 🧩 Lifecycle middleware: Before, After, Recovery
+- 🧩 Recovery, Middleware
 - 🗂 Request context with per-request storage (pooled)
 - 🧾 Accessing Query & Form Data
 - 🛡 Simple RateLimit guard (per client IP + method + path)
@@ -105,25 +105,31 @@ environments.
 
 ---
 
-## 🔐 Middleware Example
+## 🔐 Middleware
+
+- Introduced unified `Use(middleware)` function.
+- Middleware signature: `func(HandlerFunc) HandlerFunc`.
+- Built-in middleware:
+    - `AllowContentType`
+    - `ContentCharset`
+    - `CleanPath`
+    - `Compress`
+    - `CORS`
+    - `RequestID`
+    - `RealIP`
+    - `NoCache`
+    - `DefaultCompress`
+- Removed: `Before` and `After` middleware.
 
 ```go
 r := router.NewRouter()
 
 r.Static("files/public", "/assets")
 
-r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    // Runs before every request
-    r.Host = strings.Replace(r.Host, "127.0.0.1", "localhost", 1)
-	
-    if router.RateLimit(w, r, 10*time.Millisecond) {
-        router.Abort(ctx)
-		return
+r.Use(func(next router.HandlerFunc) router.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+        next(w, r, ctx)
     }
-})
-
-r.After(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    // Runs after every request
 })
 
 r.Recovery(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
@@ -132,21 +138,215 @@ r.Recovery(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
 })
 ```
 
+### Custom Middleware with r.Use
+
+This router uses a classic middleware chain similar to Express, Chi, and many other frameworks.
+A middleware is simply a function that takes a handler and returns a new handler:
+
+**What this achieves**
+
+ - You can run logic before the handler (logging, auth, rate limits…)
+ - And logic after the handler (cleanup, metrics…)
+ - Middleware runs in order of registration
+ - Each middleware wraps the next one, forming a chain
+ - Example behavior:
+
+```
+Use(M1) → Use(M2) → Handler
+
+Call stack:
+M1(before)
+  M2(before)
+    Handler
+  M2(after)
+M1(after)
+```
+
+*This gives full control over request flow without needing dedicated Before or After hooks.*
+
+### UseDefaults()
+
+UseDefaults() registers a sensible default middleware chain:
+
+ - auto-map `HEAD` → `GET`
+ - injects `X-Request-ID`
+ - resolves real client IP
+ - disables caching via `Cache-Control` headers
+
+```go
+r.UseDefaults()
+```
+
+### AllowContentType
+
+```go
+r.Use(router.AllowContentType("application/json", "text/xml"))
+```
+
+Ensures the request ``Content-Type`` header matches one of the allowed types.
+If the request has a different content type, the router returns:
+
+ - 415 Unsupported Media Type
+ - and stops the middleware chain (ctx.Abort())
+ 
+Useful when an endpoint accepts only JSON, XML, form data, etc.
+
+### CleanPath
+
+```go
+r.Use(router.CleanPath())
+```
+
+Normalizes the request URL path using `path.Clean()`.
+
+Examples:
+ - `/api//users//123/` → `/api/users/123`
+
+### ContentCharset
+```go
+allowedCharsets := []string{"UTF-8", "Latin-1", ""}
+r.Use(router.ContentCharset(allowedCharsets...))
+```
+
+Validates the `charset` parameter of the `Content-Type` header.
+
+```yaml
+Content-Type: application/json; charset=UTF-8
+```
+
+If the charset is not in the allowed list → router responds with
+`415 Unsupported Media Type` and stops processing.
+
+Passing an empty string in the allowed list lets requests without a charset pass.
+
+
+
+### DefaultCompress
+```go
+r.Use(router.DefaultCompress())
+```
+
+Enables `gzip compression` for responses when the client sends:
+
+```yaml
+Accept-Encoding: gzip
+```
+
+Compresses common MIME types:
+ - text/html
+ - text/plain
+ - text/css
+ - application/javascript
+ - text/javascript
+Automatically handles:
+ - Content-Length removal
+ - gzip writer lifecycle
+ - skip for non-2xx responses
+ - skip for HEAD method
+
+
+### RequestID
+```go
+r.Use(router.RequestID())
+```
+
+Injects a unique request ID into:
+
+ - `X-Request-ID` response header
+ - request context (`ctx.Set("request_id", ...)`)
+ - `req.Context()` under key `ContextKeyRequestID`
+
+If the client sends its own `X-Request-ID`, the middleware preserves it.
+
+
+### RealIP
+```go
+r.Use(router.RealIP())
+```
+
+Extracts the real client IP from:
+ - X-Real-IP
+ - X-Forwarded-For
+If none is trusted, falls back to `req.RemoteAddr`.
+
+The resolved IP is stored in:
+ - r.RemoteAddr
+ - req.Context()
+ - ctx.Set("real_ip", ...)
+Works together with trusted proxies defined via:
+
+```go
+router.SetTrustedProxies([]string{"10.0.0.0/8"})
+```
+
+### NoCache
+```go
+r.Use(router.NoCache())
+```
+
+Disables browser caching by adding:
+```yaml
+Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+Pragma: no-cache
+Expires: 0
+```
+
+Useful for:
+ - APIs
+ - admin panels
+ - sensitive data
+ - development mode
+
+### CORS
+
+Full CORS middleware with:
+ - dynamic origin matching (supports wildcards and prefix matches)
+ - automatic OPTIONS preflight handling
+ - credential support (cookies, auth headers)
+ - custom exposed headers
+```go
+r.Use(router.CORS(router.CORSOptions{
+	AllowedOrigins:   []string{"https://*", "http://*"},
+	AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+	AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+	ExposedHeaders:   []string{"Link"},
+	AllowCredentials: false,
+	MaxAge:           300,
+}))
+```
+If the origin does not match → middleware bypasses CORS handling and continues normally.
+
+### GetHead
+
+```go
+r.Use(router.GetHead())
+```
+Automatically converts `HEAD` requests to `GET` before routing.
+
+This avoids having to define duplicate routes:
+
+```go
+GET /users
+HEAD /users
+```
+
+The router returns empty body but correct headers, as required.
+
+
 ## 🌐 Path Prefix Stripping for Frontend Apps (no reverse proxy)
 
-Use `r.Proxy("/app")` to transparently strip the `/app` prefix before your handlers see the request path.
+Use `r.Prefix("/app")` to transparently strip the `/app` prefix before your handlers see the request path.
 Note: This does **not** forward requests to a different process/host. For reverse proxying to a Next.js dev server or a separate service, use a real reverse proxy (nginx/Caddy) or implement an `httputil.ReverseProxy` handler.
 
 This enables routing like:
 
 - `http://localhost:8000/app/test`
-// (removed; prefix stripping neroutuje neexistujúce cesty mimo prefix)
 
 
 ```go
 r := router.NewRouter()
 
-r.Proxy("/app")
+r.Prefix("/app")
 
 r.Static("files/public", "/assets")
 
@@ -204,22 +404,6 @@ r.HandleFunc("/user/<id:(\\d+)>/<slug>", "GET", func (w http.ResponseWriter, r *
 
 This is useful when you need to iterate or inspect multiple parameters.
 
-
-### 🗂 Using `Set` and `Get`
-
-You can attach and retrieve custom values during the request lifecycle using `Set` and `Get`. This is useful for passing
-data between middleware and handlers.
-
-```go
-r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    ctx.Set("startTime", time.Now())
-})
-
-r.After(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    start := ctx.Get("startTime").(time.Time)
-    log.Printf("Request took %s", time.Since(start))
-})
-```
 
 These values are stored in a thread-safe per-request context and reset automatically after the request completes.
 
@@ -383,10 +567,10 @@ r.TerminalOutput(true)
 Example output:
 
 ```go
-› NetLifeGuru 1.0.6
+› NetLifeGuru 1.0.7
 › Web servers is running on: http: //localhost:8000
 
-› NetLifeGuru 1.0.6
+› NetLifeGuru 1.0.7
 › Web servers is running on: http: //localhost:8001
 
 2025-04-11 19:34:42:  Method[GET]  localhost:8000/landing in 8µs
@@ -421,13 +605,19 @@ r.HandleFunc("/", "GET", func (w http.ResponseWriter, r *http.Request, ctx *rout
     w.WriteHeader(http.StatusOK)
 })
 
-r.Before(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    // Limit per client IP + method + path by time threshold
-    if router.RateLimit(w, r, 10*time.Millisecond) {
-        router.Abort(ctx) // request was rate-limited; handler short-circuited
-		return
+r.Use(func(next router.HandlerFunc) router.HandlerFunc {
+
+    return func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+
+        if router.RateLimit(w, r, 10*time.Millisecond) {
+            router.Abort(ctx)
+            return
     }
- })
+
+    next(w, r, ctx)
+
+    }
+})
 ```
 
 ---
@@ -862,7 +1052,6 @@ concrete.ServeHTTP(w, req)
 
 ## ✅ Roadmap Ideas
 
-- Per-route middleware (WithBefore, WithAfter)
 - Websocket support
 - Route grouping (/api, /admin)
 - CLI generator / project scaffolder
@@ -877,9 +1066,9 @@ This project is open to community contributions and feedback!
 
 ## 📢 Author
 
-Created by Martin Benadik  
+Created by NetLife Guru s.r.o.
 Framework: **NetLifeGuru Router**  
-Version: **v1.0.6**
+Version: **v1.0.7**
 
 ---
 

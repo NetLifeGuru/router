@@ -12,7 +12,34 @@ type RequestCounter struct {
 	lastRequest sync.Map
 }
 
+var trustedCIDRs []*net.IPNet
 var requestCounter = &RequestCounter{}
+
+func SetTrustedProxies(cidrs []string) {
+	trustedCIDRs = trustedCIDRs[:0]
+	for _, c := range cidrs {
+		if _, ipn, err := net.ParseCIDR(c); err == nil {
+			trustedCIDRs = append(trustedCIDRs, ipn)
+		}
+	}
+}
+
+func isTrustedRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range trustedCIDRs {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 func fastTrimSpace(s string) string {
 	start := 0
@@ -47,14 +74,14 @@ func firstCommaPart(s string) string {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return fastTrimSpace(firstCommaPart(xff))
+	if isTrustedRemote(r.RemoteAddr) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			return fastTrimSpace(firstCommaPart(xff))
+		}
+		if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
+			return fastTrimSpace(xrip)
+		}
 	}
-
-	if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
-		return fastTrimSpace(xrip)
-	}
-
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
 		return host
 	}
@@ -93,8 +120,10 @@ func RateLimit(w http.ResponseWriter, r *http.Request, threshold time.Duration) 
 			return true
 		}
 	}
+
 	requestCounter.lastRequest.Store(key, now)
 	cleanupOldRequests(now, threshold*2)
+
 	return false
 }
 

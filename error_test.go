@@ -26,7 +26,12 @@ func TestError_WritesToLogFile(t *testing.T) {
 	filename := time.Now().Format("2006-01-02") + ".error.log"
 	path := filepath.Join("logs", filename)
 
-	defer os.RemoveAll("logs")
+	defer func() {
+		err := os.RemoveAll("logs")
+		if err != nil {
+			t.Fatalf("expected remove all log files: %s", err)
+		}
+	}()
 
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {

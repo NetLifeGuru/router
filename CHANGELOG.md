@@ -7,6 +7,56 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ---
 
+## [1.0.7] – 2025-11-25
+
+### Added
+- Unified middleware system (`Use`) replacing old lifecycle hooks.
+- New built-in middleware: AllowContentType, ContentCharset, CleanPath, DefaultCompress, Compress, CORS, RequestID, RealIP, NoCache, GetHead.
+- New `UseDefaults()` helper registering a standard middleware chain.
+- Improved terminal logging with better panic formatting and colors.
+- Extended built-in pattern matchers and optimized non-regex path evaluation.
+
+### Changed
+- Removed legacy `Before` and `After` middleware API.
+- Context system now resets more efficiently; improved parameter handling.
+- Enhanced RealIP middleware with trusted proxy list via SetTrustedProxies.
+- CORS system rewritten with wildcard support, exposed headers & credential rules.
+- Static path rewriting improved for frontend-prefix usage.
+- Compression middleware improved for HEAD responses & automatic MIME detection.
+
+### Removed
+- Deprecated `Before` and `After` lifecycle middleware.
+- All remaining internal references to old lifecycle hooks.
+
+### Fixed
+- Improved radix tree matching for star-prefixed and wildcard nodes.
+- Better prefix selection logic inside routing tree.
+- Compression now consistently removes Content-Length when required.
+- Panic logs now always include method and normalized request path.
+
+### Performance
+- Faster radix prefix matching with fewer allocations.
+- More efficient middleware chaining (lighter wrapper structure).
+- Faster RealIP resolution and reduced header parsing overhead.
+- Named pattern matchers now outperform equivalent regex.
+
+### Migration
+- Replace:
+  - r.Before(...) and  r.After(...)
+    With:
+  - r.Use(func(next router.HandlerFunc) router.HandlerFunc { ... })
+
+- Remove custom HEAD handling; use:
+  r.Use(router.GetHead())
+
+- Using old compression wrappers? Replace with:
+  r.Use(router.DefaultCompress())
+
+- Using proxy IP detection? Configure:
+  router.SetTrustedProxies([]string{"10.0.0.0/8"})
+
+---
+
 ## [1.0.6] – 2025-09-24
 
 ### Added

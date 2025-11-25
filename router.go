@@ -23,15 +23,16 @@ import (
 	"time"
 )
 
+type headWriter struct{ http.ResponseWriter }
+
 type HandlerFunc func(http.ResponseWriter, *http.Request, *Context)
 
 type IRouter interface {
 	MultiListenAndServe(listeners Listeners)
 	ListenAndServe(port int)
 	HandleFunc(url string, methods string, fn HandlerFunc)
-	Proxy(segment string)
-	Before(fn HandlerFunc)
-	After(fn HandlerFunc)
+	Prefix(segment string)
+	Use(m Middleware)
 	Recovery(fn HandlerFunc)
 	Static(dir string, replace string)
 	EnableProfiling(EnableProfiling string)
@@ -41,7 +42,7 @@ type IRouter interface {
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `v1.0.6`
+const serverVersion = `v1.0.7`
 
 type Listener struct {
 	Listen string
@@ -67,6 +68,8 @@ type StaticSegments struct {
 	Order int
 }
 
+var notFound = []byte("404 page not found")
+
 type StaticMap map[string]http.Handler
 
 type RouteEntry struct {
@@ -77,49 +80,31 @@ type RouteEntry struct {
 	Validation bool
 }
 
-type RouteIndex map[int]map[int]RouteEntry
-type Routes map[string]RouteIndex
 type StaticRoutes map[string]RouteEntry
 
-type node struct {
-	depth    int
-	segment  string
-	next     string
-	children map[string]*node
-}
-
 type Router struct {
-	routes         Routes
-	root           *node
-	roots          map[int]*RadixNode
 	radixRoot      *RadixNode
 	staticRoutes   StaticRoutes
 	mux            *http.ServeMux
-	beforeHandlers []HandlerFunc
-	afterHandlers  []HandlerFunc
 	recovery       HandlerFunc
 	notFound       HandlerFunc
 	terminalOutput bool
-	proxySegment   string
+	prefixSegment  string
 	staticFiles    StaticMap
 	ready          atomic.Bool
+	middlewares    []Middleware
 }
 
 func NewRouter() IRouter {
 	r := &Router{
-		routes: make(Routes),
-		root: &node{
-			children: make(map[string]*node),
-		},
 		radixRoot:      &RadixNode{},
 		staticRoutes:   make(StaticRoutes),
 		mux:            http.NewServeMux(),
-		beforeHandlers: []HandlerFunc{},
-		afterHandlers:  []HandlerFunc{},
+		middlewares:    []Middleware{},
 		recovery:       nil,
 		notFound:       nil,
 		terminalOutput: false,
-		proxySegment:   "",
+		prefixSegment:  "",
 		staticFiles:    make(StaticMap),
 	}
 
@@ -144,6 +129,8 @@ const (
 	_MATCH
 	_SUBMATCH
 )
+
+func (hw headWriter) Write(b []byte) (int, error) { return len(b), nil }
 
 func (r *Router) removeWrapper(s string, start string, end string) string {
 	var str string
@@ -260,12 +247,9 @@ func (r *Router) preparePattern(url string) (string, []Pattern, bool, bool, stri
 	)
 
 	segments := splitPath(url)
-	current := r.root
+	parts := make([]string, 0, len(segments))
 
-	var parts []string
-	parts = make([]string, 0, len(segments))
-
-	for depth, seg := range segments {
+	for _, seg := range segments {
 		if seg == "" {
 			continue
 		}
@@ -277,28 +261,15 @@ func (r *Router) preparePattern(url string) (string, []Pattern, bool, bool, stri
 		p, st, rv := r.parseSlug(isStatic, reqValidation, seg, url)
 
 		slugPart := p.Slug
-
 		if p.Type != _STRING {
 			slugPart = "*"
 		}
+
 		parts = append(parts, slugPart)
 
 		isStatic = st
 		reqValidation = rv
 		patterns = append(patterns, p)
-
-		if seg[0] != '<' && seg[0] != '{' {
-			child, ok := current.children[seg]
-			if !ok {
-				child = &node{
-					depth:    depth,
-					segment:  seg,
-					children: make(map[string]*node),
-				}
-				current.children[seg] = child
-			}
-			current = child
-		}
 	}
 
 	radixURL := "/" + strings.Join(parts, "/")
@@ -307,35 +278,22 @@ func (r *Router) preparePattern(url string) (string, []Pattern, bool, bool, stri
 }
 
 func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
-	route, patterns, isStatic, reqValidation, radixURL := r.preparePattern(url)
+	_, patterns, isStatic, reqValidation, radixURL := r.preparePattern(url)
 
 	entry := RouteEntry{
 		Route:      url,
 		Patterns:   patterns,
 		Handler:    fn,
-		Bitmask:    r.bitmask(url, methods),
+		Bitmask:    r.MethodsToBitmask(methods),
 		Validation: reqValidation,
 	}
 
+	if entry.Bitmask < 0 {
+		log.Fatalf("Invalid HTTP method in route %q methods %q", url, methods)
+	}
+
 	if isStatic {
-
 		r.staticRoutes[url] = entry
-
-	} else {
-
-		if _, exists := r.routes[route]; !exists {
-			r.routes[route] = make(RouteIndex)
-		}
-
-		depth := len(patterns)
-
-		if _, exists := r.routes[route][depth]; !exists {
-			r.routes[route][depth] = make(map[int]RouteEntry)
-		}
-
-		l := len(r.routes[route][depth])
-
-		r.routes[route][depth][l] = entry
 	}
 
 	r.insertNode(radixURL, entry)
@@ -385,16 +343,21 @@ func (r *Router) EnableProfiling(profilingServer string) {
 	}()
 }
 
-func (r *Router) Proxy(segment string) {
-	r.proxySegment = segment
-}
+func (r *Router) Prefix(segment string) {
+	if segment == "" || segment == "/" {
+		r.prefixSegment = ""
+		return
+	}
 
-func (r *Router) Before(fn HandlerFunc) {
-	r.beforeHandlers = append(r.beforeHandlers, fn)
-}
+	if !strings.HasPrefix(segment, "/") {
+		segment = "/" + segment
+	}
 
-func (r *Router) After(fn HandlerFunc) {
-	r.afterHandlers = append(r.afterHandlers, fn)
+	for len(segment) > 1 && strings.HasSuffix(segment, "/") {
+		segment = segment[:len(segment)-1]
+	}
+
+	r.prefixSegment = segment
 }
 
 func (r *Router) Recovery(fn HandlerFunc) {
@@ -438,27 +401,12 @@ func (r *Router) secondaryRecover(w http.ResponseWriter, req *http.Request, ctx 
 }
 
 func (r *Router) Run(w http.ResponseWriter, req *http.Request, handler HandlerFunc, ctx *Context) {
-
-	for i := 0; i < len(r.beforeHandlers); i++ {
-		r.beforeHandlers[i](w, req, ctx)
-		if ctx.Aborted() {
-			return
-		}
-	}
-
 	if r.terminalOutput {
 		start := time.Now()
 		handler(w, req, ctx)
 		logRequest(req, start)
 	} else {
 		handler(w, req, ctx)
-	}
-
-	for i := 0; i < len(r.afterHandlers); i++ {
-		r.afterHandlers[i](w, req, ctx)
-		if ctx.Aborted() {
-			return
-		}
 	}
 }
 
@@ -472,32 +420,33 @@ func (r *Router) write405(w http.ResponseWriter, mask int) {
 }
 
 func (r *Router) maskToAllowHeader(mask int) string {
-	var m []string
+	have := map[string]bool{}
 	if mask&GET != 0 {
-		m = append(m, "GET")
+		have["GET"], have["HEAD"] = true, true
 	}
 	if mask&POST != 0 {
-		m = append(m, "POST")
+		have["POST"] = true
 	}
 	if mask&PUT != 0 {
-		m = append(m, "PUT")
+		have["PUT"] = true
 	}
 	if mask&DELETE != 0 {
-		m = append(m, "DELETE")
+		have["DELETE"] = true
 	}
 	if mask&PATCH != 0 {
-		m = append(m, "PATCH")
+		have["PATCH"] = true
 	}
-	if mask&HEAD != 0 {
-		m = append(m, "HEAD")
-	}
-	if mask&OPTIONS != 0 {
-		m = append(m, "OPTIONS")
-	}
-	return strings.Join(m, ", ")
-}
 
-var notFound = []byte("404 page not found")
+	have["OPTIONS"] = true
+	order := []string{"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
+	out := make([]string, 0, len(order))
+	for _, m := range order {
+		if have[m] {
+			out = append(out, m)
+		}
+	}
+	return strings.Join(out, ", ")
+}
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx := GetContext()
@@ -530,7 +479,13 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		method := r.getBitmaskIndex(req.Method)
 
 		if t.Bitmask&method != 0 {
-			r.Run(w, req, t.Handler, ctx)
+			ctx.Params = ctx.Params[:0]
+			ctx.paramMap = nil
+			ctx.Entries = ctx.Entries[:0]
+
+			handler := r.wrap(t.Handler)
+
+			r.Run(w, req, handler, ctx)
 			return
 		}
 
@@ -570,10 +525,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					continue
 				}
 
-				var segment string
 				if entry.Validation {
 					for depth, p := range entry.Patterns {
-						segment = ctx.Segments[depth].Value
+						segment := ctx.Segments[depth].Value
 						if p.Type != _STRING {
 							switch p.Type {
 							case _MATCH:
@@ -613,10 +567,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.notFound(w, req, ctx)
 	} else {
 		w.WriteHeader(http.StatusNotFound)
-		_, err := w.Write(notFound)
-		if err != nil {
-			return
-		}
+		_, _ = w.Write(notFound)
 	}
 }
 
@@ -636,14 +587,16 @@ func (r *Router) Handler() http.HandlerFunc {
 			return
 		}
 
-		if r.proxySegment != "" {
-			seg := r.proxySegment
+		if r.prefixSegment != "" {
+			seg := r.prefixSegment
 			segLen := len(seg)
-			if len(path) >= segLen && path[:segLen] == seg {
+			if path == seg {
+				req.URL.Path = "/"
+			} else if len(path) > segLen &&
+				path[:segLen] == seg &&
+				path[segLen] == '/' {
+
 				req.URL.Path = path[segLen:]
-				if req.URL.Path == "" {
-					req.URL.Path = "/"
-				}
 			}
 		}
 

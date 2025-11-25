@@ -4,7 +4,7 @@ type RadixNode struct {
 	prefix   string
 	children []*RadixNode
 	isLeaf   bool
-	entry    RouteEntry
+	entries  []RouteEntry
 }
 
 func (r *Router) insertNode(key string, entry RouteEntry) {
@@ -53,7 +53,7 @@ func (r *Router) insert(node *RadixNode, key string, entry RouteEntry) {
 		}
 		if lcp == len(child.prefix) && lcp == len(key) {
 			child.isLeaf = true
-			child.entry = entry
+			child.entries = append(child.entries, entry)
 			return
 		}
 		if lcp < len(child.prefix) {
@@ -61,21 +61,23 @@ func (r *Router) insert(node *RadixNode, key string, entry RouteEntry) {
 				prefix:   child.prefix[lcp:],
 				children: child.children,
 				isLeaf:   child.isLeaf,
-				entry:    child.entry,
+				entries:  child.entries,
 			}
 			child.prefix = child.prefix[:lcp]
 			child.children = []*RadixNode{newChild}
 			child.isLeaf = false
+			child.entries = nil
 		}
 		if lcp < len(key) {
 			r.insert(child, key[lcp:], entry)
 		} else {
 			child.isLeaf = true
-			child.entry = entry
+			child.entries = append(child.entries, entry)
 		}
 		return
 	}
-	node.children = append(node.children, &RadixNode{prefix: key, isLeaf: true, entry: entry})
+
+	node.children = append(node.children, &RadixNode{prefix: key, isLeaf: true, entries: []RouteEntry{entry}})
 }
 
 func (r *Router) searchAll(key string, ctx *Context) bool {
@@ -83,7 +85,9 @@ func (r *Router) searchAll(key string, ctx *Context) bool {
 	dfs = func(n *RadixNode, k string) bool {
 		if len(k) == 0 {
 			if n.isLeaf {
-				ctx.Entries = append(ctx.Entries, n.entry)
+				for _, e := range n.entries {
+					ctx.Entries = append(ctx.Entries, e)
+				}
 				return true
 			}
 			return false
