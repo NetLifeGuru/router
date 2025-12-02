@@ -23,7 +23,7 @@ func makeTrackingHandler(called *bool) HandlerFunc {
 }
 
 func TestRouterMiddlewareOrder(t *testing.T) {
-	var r Router
+	r := NewRouter().(*Router)
 
 	var order []string
 
@@ -49,7 +49,7 @@ func TestRouterMiddlewareOrder(t *testing.T) {
 	finalCalled := false
 	final := makeTrackingHandler(&finalCalled)
 
-	wrapped := r.wrap(final)
+	wrapped := r.wrap("/", final)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -318,7 +318,7 @@ func TestCORSNonCORSRequest(t *testing.T) {
 	h := m(makeTrackingHandler(&called))
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil) // bez Origin
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := newTestContext()
 
 	h(rr, req, ctx)

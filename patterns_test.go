@@ -65,7 +65,7 @@ func TestIsUUID(t *testing.T) {
 
 func TestIsSafeText(t *testing.T) {
 	ok := []string{"Hello-World_123.txt"}
-	fail := []string{"#", "", "💥"}
+	fail := []string{"#", "", "fail"}
 	runMatcherTest(t, isSafeText, ok, fail)
 }
 

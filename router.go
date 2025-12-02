@@ -39,10 +39,16 @@ type IRouter interface {
 	TerminalOutput(terminalOutput bool)
 	NotFound(fn HandlerFunc)
 	Ready()
+	Group(prefix string) *RouteGroup
 }
 
 const serverName = `NetLifeGuru`
-const serverVersion = `v1.0.7`
+const serverVersion = `v1.0.8`
+
+type RouteGroup struct {
+	r      *Router
+	prefix string
+}
 
 type Listener struct {
 	Listen string
@@ -82,30 +88,39 @@ type RouteEntry struct {
 
 type StaticRoutes map[string]RouteEntry
 
+type GroupMiddleware struct {
+	Route string
+	Group string
+}
+
+type GroupMiddlewares map[string]GroupMiddleware
+
 type Router struct {
-	radixRoot      *RadixNode
-	staticRoutes   StaticRoutes
-	mux            *http.ServeMux
-	recovery       HandlerFunc
-	notFound       HandlerFunc
-	terminalOutput bool
-	prefixSegment  string
-	staticFiles    StaticMap
-	ready          atomic.Bool
-	middlewares    []Middleware
+	radixRoot        *RadixNode
+	staticRoutes     StaticRoutes
+	groupMiddlewares GroupMiddlewares
+	mux              *http.ServeMux
+	recovery         HandlerFunc
+	notFound         HandlerFunc
+	terminalOutput   bool
+	prefixSegment    string
+	staticFiles      StaticMap
+	ready            atomic.Bool
+	middlewares      map[string][]Middleware
 }
 
 func NewRouter() IRouter {
 	r := &Router{
-		radixRoot:      &RadixNode{},
-		staticRoutes:   make(StaticRoutes),
-		mux:            http.NewServeMux(),
-		middlewares:    []Middleware{},
-		recovery:       nil,
-		notFound:       nil,
-		terminalOutput: false,
-		prefixSegment:  "",
-		staticFiles:    make(StaticMap),
+		radixRoot:        &RadixNode{},
+		staticRoutes:     make(StaticRoutes),
+		groupMiddlewares: make(GroupMiddlewares),
+		mux:              http.NewServeMux(),
+		middlewares:      make(map[string][]Middleware),
+		recovery:         nil,
+		notFound:         nil,
+		terminalOutput:   false,
+		prefixSegment:    "",
+		staticFiles:      make(StaticMap),
 	}
 
 	r.ready.Store(true)
@@ -277,6 +292,13 @@ func (r *Router) preparePattern(url string) (string, []Pattern, bool, bool, stri
 	return first, patterns, isStatic, reqValidation, radixURL
 }
 
+func (r *Router) validatePath(path string) {
+	valid := regexp.MustCompile(`^[/A-Za-z0-9._~-]+$`)
+	if !valid.MatchString(path) {
+		log.Fatalf("router: invalid route path %q (allowed characters: / A-Z a-z 0-9 - _ . ~)", path)
+	}
+}
+
 func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
 	_, patterns, isStatic, reqValidation, radixURL := r.preparePattern(url)
 
@@ -297,7 +319,6 @@ func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
 	}
 
 	r.insertNode(radixURL, entry)
-
 }
 
 func (r *Router) Static(dir string, replace string) {
@@ -483,7 +504,8 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			ctx.paramMap = nil
 			ctx.Entries = ctx.Entries[:0]
 
-			handler := r.wrap(t.Handler)
+			handler := t.Handler
+			handler = r.wrap(t.Route, t.Handler)
 
 			r.Run(w, req, handler, ctx)
 			return
@@ -552,7 +574,11 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				ctx.Entries = ctx.Entries[:0]
 				ctx.Entries = append(ctx.Entries, entry)
 
-				r.Run(w, req, entry.Handler, ctx)
+				handler := entry.Handler
+
+				handler = r.wrap(entry.Route, entry.Handler)
+
+				r.Run(w, req, handler, ctx)
 				return
 			}
 		}
@@ -604,6 +630,38 @@ func (r *Router) Handler() http.HandlerFunc {
 	})
 
 	return handler
+}
+
+func (r *Router) Group(prefix string) *RouteGroup {
+	if prefix == "" || prefix == "/" {
+		log.Fatalf("router: invalid group prefix %q (cannot be empty or '/')", prefix)
+	}
+
+	r.validatePath(prefix)
+
+	if prefix[0] != '/' {
+		prefix = "/" + prefix
+	}
+
+	return &RouteGroup{
+		r:      r,
+		prefix: prefix,
+	}
+}
+
+func (g *RouteGroup) HandleFunc(url string, methods string, fn HandlerFunc) {
+	if !strings.HasPrefix(url, "/") {
+		url = "/" + url
+	}
+
+	full := g.prefix + url
+
+	g.r.insertGroupMiddleware(g.prefix, full)
+	g.r.HandleFunc(full, methods, fn)
+}
+
+func (g *RouteGroup) Use(m Middleware) {
+	g.r.useGroup(m, g.prefix)
 }
 
 func (r *Router) Ready() {

@@ -200,3 +200,27 @@ func TestEnableProfiling(t *testing.T) {
 		t.Errorf("pprof endpoint not available: %v, status: %d", err, resp.StatusCode)
 	}
 }
+
+func TestRouteGrouping(t *testing.T) {
+	r := NewRouter().(*Router)
+
+	v1 := r.Group("/api/v1")
+	v1.HandleFunc("/status", "GET", func(w http.ResponseWriter, _ *http.Request, ctx *Context) {
+		_, err := w.Write([]byte("ok"))
+		if err != nil {
+			return
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	w := httptest.NewRecorder()
+
+	r.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if w.Body.String() != "ok" {
+		t.Errorf("expected body 'ok', got '%s'", w.Body.String())
+	}
+}

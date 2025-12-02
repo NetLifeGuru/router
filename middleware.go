@@ -16,14 +16,36 @@ import (
 
 type Middleware func(HandlerFunc) HandlerFunc
 
-func (r *Router) Use(m Middleware) {
-	r.middlewares = append(r.middlewares, m)
+func (r *Router) insertGroupMiddleware(group string, url string) {
+	r.groupMiddlewares[url] = GroupMiddleware{
+		Route: url,
+		Group: group,
+	}
 }
 
-func (r *Router) wrap(h HandlerFunc) HandlerFunc {
-	for i := len(r.middlewares) - 1; i >= 0; i-- {
-		h = r.middlewares[i](h)
+func (r *Router) Use(m Middleware) {
+	r.useGroup(m, "")
+}
+
+func (r *Router) useGroup(m Middleware, n string) {
+	r.middlewares[n] = append(r.middlewares[n], m)
+}
+
+func (r *Router) wrap(route string, h HandlerFunc) HandlerFunc {
+	if gm, ok := r.groupMiddlewares[route]; ok && gm.Group != "" {
+		if mws, ok := r.middlewares[gm.Group]; ok {
+			for i := len(mws) - 1; i >= 0; i-- {
+				h = mws[i](h)
+			}
+		}
 	}
+
+	if mws, ok := r.middlewares[""]; ok {
+		for i := len(mws) - 1; i >= 0; i-- {
+			h = mws[i](h)
+		}
+	}
+
 	return h
 }
 

@@ -1,7 +1,7 @@
 [![Go Version](https://img.shields.io/badge/go-%3E=1.19-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
-# 🚀 NetLifeGuru Router v1.0.7
+# 🚀 NetLifeGuru Router v1.0.8
 
 A clean, performant and idiomatic HTTP router & microframework for Go – built for modern backend APIs, apps, and
 full-stack setups.
@@ -15,7 +15,7 @@ multi-port servers.
 
 - 🩺 Healthcheck endpoint `/ready` (enable with `r.Ready()`)
 - 🌐 Custom routing with regex parameters
-- 🧩 Recovery, Middleware
+- 🧩 Recovery, Middleware, Route Grouping
 - 🗂 Request context with per-request storage (pooled)
 - 🧾 Accessing Query & Form Data
 - 🛡 Simple RateLimit guard (per client IP + method + path)
@@ -60,7 +60,6 @@ import (
 	"fmt"
 	"net/http"
 	"github.com/NetLifeGuru/router"
-    "time"
 )
 
 func main() {
@@ -105,6 +104,73 @@ environments.
 
 ---
 
+## Route Grouping
+Route groups allow you to organize related routes under a shared URL prefix.
+This helps keep your API structure clean and scalable while avoiding repetitive path definitions.
+They also support group-level middleware, meaning middleware declared on a group runs only for routes inside that group.
+
+### Groups help you:
+ - keep a clean and predictable API structure,
+ - avoid repeating common prefixes like /api/v1/...,
+ - attach middleware only to a specific section of your API,
+ - build modular and isolated API modules.
+
+### Basic Usage
+```go
+api := r.Group("/api")
+
+api.HandleFunc("/users", "GET", getUsersHandler)
+api.HandleFunc("/posts", "POST", createPostHandler)
+```
+
+This registers the following endpoints:
+ - `/api/users`
+ - `/api/posts`
+
+### Group-Level Middleware
+Route groups support scoped middleware via:
+
+```go
+api.Use(middleware)
+```
+Middleware added this way runs only for routes inside this group, and it executes **after global middleware (closer to the handler)**.
+
+### Example
+
+```go
+v1 := r.Group("/v1/api")
+
+// Group-level middleware
+v1.Use(func(next router.HandlerFunc) router.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, ctx *router.Context) {
+		fmt.Println("before v1")
+		next(w, r, ctx)
+		fmt.Println("after v1")
+	}
+})
+
+// Group route
+v1.HandleFunc("/users/{id}", "GET", func(w http.ResponseWriter, req *http.Request, ctx *router.Context) {
+	router.JSON(w, 200, map[string]any{
+		"users": []string{"A", "B"},
+	})
+})
+```
+
+Output when calling `/v1/api/users/123`:
+```go
+before v1
+(after handler output)
+after v1
+```
+
+### Why Use Route Groups?
+ - Cleaner and more maintainable API structure
+ - Avoid repeating common prefixes (e.g., /api/v1/...)
+ - Easier to organize large projects
+ - Allows future extension such as group-level middleware
+
+
 ## 🔐 Middleware
 
 - Introduced unified `Use(middleware)` function.
@@ -133,7 +199,6 @@ r.Use(func(next router.HandlerFunc) router.HandlerFunc {
 })
 
 r.Recovery(func (w http.ResponseWriter, r *http.Request, ctx *router.Context) {
-    // Handles panics
     http.Error(w, "Unexpected error occurred", http.StatusInternalServerError)
 })
 ```
@@ -161,6 +226,8 @@ M1(before)
   M2(after)
 M1(after)
 ```
+
+Global middleware wrap everything, group middleware run closer to the handler.
 
 *This gives full control over request flow without needing dedicated Before or After hooks.*
 
@@ -1050,14 +1117,6 @@ concrete.ServeHTTP(w, req)
 
 ---
 
-## ✅ Roadmap Ideas
-
-- Websocket support
-- Route grouping (/api, /admin)
-- CLI generator / project scaffolder
-
----
-
 ## 🤝 Contributing
 
 This project is open to community contributions and feedback!
@@ -1068,12 +1127,12 @@ This project is open to community contributions and feedback!
 
 Created by NetLife Guru s.r.o.
 Framework: **NetLifeGuru Router**  
-Version: **v1.0.7**
+Version: **v1.0.8**
 
 ---
 
 ## 🧬 Inspired by:
 
 - Go’s net/http
-- Chi, Echo, Fiber
+- Gin, Chi, Fiber
 - UNIX minimalism & purpose-driven tools

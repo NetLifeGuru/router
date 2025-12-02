@@ -23,17 +23,21 @@ func longestCommonPrefixStr(a, b string) int {
 	return i
 }
 
-func matchPrefixWithStarStr(prefix, key string) (consumed int, ok bool) {
+func matchPrefixWithStarStr(prefix, key string) (int, bool) {
+	pLen := len(prefix)
+	kLen := len(key)
 	i, j := 0, 0
-	for i < len(prefix) {
-		if prefix[i] == '*' {
-			for j < len(key) && key[j] != '/' {
+
+	for i < pLen {
+		c := prefix[i]
+		if c == '*' {
+			for j < kLen && key[j] != '/' {
 				j++
 			}
 			i++
 			continue
 		}
-		if j >= len(key) || prefix[i] != key[j] {
+		if j >= kLen || c != key[j] {
 			return 0, false
 		}
 		i++
@@ -81,44 +85,46 @@ func (r *Router) insert(node *RadixNode, key string, entry RouteEntry) {
 }
 
 func (r *Router) searchAll(key string, ctx *Context) bool {
-	var dfs func(n *RadixNode, k string) bool
-	dfs = func(n *RadixNode, k string) bool {
-		if len(k) == 0 {
-			if n.isLeaf {
-				for _, e := range n.entries {
-					ctx.Entries = append(ctx.Entries, e)
-				}
-				return true
-			}
-			return false
-		}
-		found := false
+	return r.dfs(r.radixRoot, key, ctx)
+}
 
-		for _, ch := range n.children {
-			if len(ch.prefix) == 0 || ch.prefix[0] == '*' {
-				continue
-			}
-			if k[0] != ch.prefix[0] {
-				continue
-			}
-			if cons, ok := matchPrefixWithStarStr(ch.prefix, k); ok {
-				if dfs(ch, k[cons:]) {
-					found = true
-				}
-			}
+func (r *Router) dfs(n *RadixNode, k string, ctx *Context) bool {
+	if len(k) == 0 {
+		if n.isLeaf {
+			ctx.Entries = append(ctx.Entries, n.entries...)
+			return true
 		}
-
-		for _, ch := range n.children {
-			if len(ch.prefix) == 0 || ch.prefix[0] != '*' {
-				continue
-			}
-			if cons, ok := matchPrefixWithStarStr(ch.prefix, k); ok {
-				if dfs(ch, k[cons:]) {
-					found = true
-				}
-			}
-		}
-		return found
+		return false
 	}
-	return dfs(r.radixRoot, key)
+
+	found := false
+
+	k0 := k[0]
+
+	for _, ch := range n.children {
+		if len(ch.prefix) == 0 || ch.prefix[0] == '*' {
+			continue
+		}
+		if k0 != ch.prefix[0] {
+			continue
+		}
+		if cons, ok := matchPrefixWithStarStr(ch.prefix, k); ok {
+			if r.dfs(ch, k[cons:], ctx) {
+				found = true
+			}
+		}
+	}
+
+	for _, ch := range n.children {
+		if len(ch.prefix) == 0 || ch.prefix[0] != '*' {
+			continue
+		}
+		if cons, ok := matchPrefixWithStarStr(ch.prefix, k); ok {
+			if r.dfs(ch, k[cons:], ctx) {
+				found = true
+			}
+		}
+	}
+
+	return found
 }

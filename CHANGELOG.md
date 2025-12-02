@@ -7,6 +7,49 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
 ---
 
+## [1.0.8] – 2025-12-02
+
+### Added
+
+- **Route Grouping API**
+  - Introduced `Group(prefix)` for clean hierarchical routing:
+  - Fully supports nested groups
+  - Prefix concatenation is automatic
+  - Does not modify the router’s global prefix
+- **Group-level middleware** 
+  - Added group.Use(middleware) for middleware scoped to a specific route group. 
+  - Middleware execution order: `inner group` - `outer groups` - `global`. 
+  - Internal: added per-group middleware registry and `route` - `group mapping`.
+- Added internal utilities for group path joining & validation
+- Validation prevents empty or root group prefixes ("" or /)
+- Documentation updated with a full “Route Grouping” section.
+
+### Changed
+ - Correct handling of leading/trailing slashes when combining group prefixes.
+ - Improved static/dynamic route detection inside grouped paths.
+ - Fixed edge case where grouped routes inside `Static()` prefixes could mis-detect path boundaries.
+ - Resolved minor logging edge cases where grouped routes printed an unnormalized path.
+ - `wrap()` updated to properly layer group middleware.
+
+
+### Performance
+ - Route matching for grouped prefixes now reuses cached prefix slices to avoid repeated allocations.
+ - Faster concatenation of nested group prefixes (avoids repeated CleanPath calls).
+ - Micro-optimizations in radix tree insertion for grouped routes.
+
+
+### Migration
+
+No breaking changes.
+You can start using grouping immediately:
+
+```go
+v1 := r.Group("/v1")
+v1.HandleFunc("/users", "GET", getUsers)
+```
+
+
+
 ## [1.0.7] – 2025-11-25
 
 ### Added
