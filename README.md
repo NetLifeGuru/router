@@ -34,7 +34,7 @@ multi-port servers.
 ## 📦 Installation
 
 ```bash
-go get github.com/NetLifeGuru/router@latest
+go get github.com/NetLifeGuru/router@main
 ```
 
 ---

@@ -23,8 +23,6 @@ import (
 	"time"
 )
 
-type headWriter struct{ http.ResponseWriter }
-
 type HandlerFunc func(http.ResponseWriter, *http.Request, *Context)
 
 type IRouter interface {
@@ -145,8 +143,6 @@ const (
 	_SUBMATCH
 )
 
-func (hw headWriter) Write(b []byte) (int, error) { return len(b), nil }
-
 func (r *Router) removeWrapper(s string, start string, end string) string {
 	var str string
 
@@ -253,7 +249,7 @@ func splitPath(path string) []string {
 	return segments
 }
 
-func (r *Router) preparePattern(url string) (string, []Pattern, bool, bool, string) {
+func (r *Router) preparePattern(url string) ([]Pattern, bool, bool, string) {
 	var (
 		first         string
 		patterns      []Pattern
@@ -289,7 +285,7 @@ func (r *Router) preparePattern(url string) (string, []Pattern, bool, bool, stri
 
 	radixURL := "/" + strings.Join(parts, "/")
 
-	return first, patterns, isStatic, reqValidation, radixURL
+	return patterns, isStatic, reqValidation, radixURL
 }
 
 func (r *Router) validatePath(path string) {
@@ -300,7 +296,7 @@ func (r *Router) validatePath(path string) {
 }
 
 func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
-	_, patterns, isStatic, reqValidation, radixURL := r.preparePattern(url)
+	patterns, isStatic, reqValidation, radixURL := r.preparePattern(url)
 
 	entry := RouteEntry{
 		Route:      url,
@@ -316,9 +312,9 @@ func (r *Router) HandleFunc(url string, methods string, fn HandlerFunc) {
 
 	if isStatic {
 		r.staticRoutes[url] = entry
+	} else {
+		r.insertNode(radixURL, entry)
 	}
-
-	r.insertNode(radixURL, entry)
 }
 
 func (r *Router) Static(dir string, replace string) {
@@ -539,7 +535,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			bitmask := r.getBitmaskIndex(req.Method)
 
 		outer:
-			for _, entry := range ctx.Entries {
+			for i := 0; i < len(ctx.Entries); i++ {
+				entry := &ctx.Entries[i]
+
 				foundPath = true
 				allowedMask |= entry.Bitmask
 
@@ -548,8 +546,10 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 
 				if entry.Validation {
-					for depth, p := range entry.Patterns {
+					for depth := 0; depth < len(entry.Patterns); depth++ {
+						p := entry.Patterns[depth]
 						segment := ctx.Segments[depth].Value
+
 						if p.Type != _STRING {
 							switch p.Type {
 							case _MATCH:
@@ -571,13 +571,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 				ctx.Params = ctx.Params[:0]
 				ctx.paramMap = nil
-				ctx.Entries = ctx.Entries[:0]
-				ctx.Entries = append(ctx.Entries, entry)
+				ctx.Entries = append(ctx.Entries[:0], *entry)
 
-				handler := entry.Handler
-
-				handler = r.wrap(entry.Route, entry.Handler)
-
+				handler := r.wrap(entry.Route, entry.Handler)
 				r.Run(w, req, handler, ctx)
 				return
 			}
